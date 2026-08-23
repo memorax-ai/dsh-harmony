@@ -561,6 +561,19 @@ function retainPatchStatuses(previous: Map<string, HarmonyPatchStatus>): void {
   }))
 }
 
+function retainTransformRecords(
+  previous: Map<string, TransformRecord>,
+  previousGeneration: number,
+  nextGeneration: number,
+): Map<string, TransformRecord> {
+  return new Map([...previous.values()]
+    .filter(record => record.generation === previousGeneration)
+    .map(record => {
+      const retained = { ...record, generation: nextGeneration }
+      return [`${nextGeneration}\0${record.filename}`, retained]
+    }))
+}
+
 function snapshotGeneration(retainedGeneration?: number, inheritTargetIndex = false): void {
   const retainedState = retainedGeneration === undefined ? undefined : generationStates.get(retainedGeneration)
   generationStates.clear()
@@ -1098,7 +1111,9 @@ export function beginPluginUpdate(
   generation = ++generationSequence
   const candidateGeneration = generation
   pendingStatusGenerations.add(candidateGeneration)
-  transformCache = new Map()
+  transformCache = targets.size === 0
+    ? retainTransformRecords(previous.cache, previous.generation, candidateGeneration)
+    : new Map()
   semanticBindings = new Map(previous.bindings)
   if (targets.size === 0) retainPatchStatuses(previous.statuses)
   else resetPatchStatuses()
@@ -1196,7 +1211,9 @@ export function beginProfileUpdate(input: {
   generation = ++generationSequence
   const candidateGeneration = generation
   pendingStatusGenerations.add(candidateGeneration)
-  transformCache = new Map()
+  transformCache = targets.size === 0
+    ? retainTransformRecords(previous.cache, previous.generation, candidateGeneration)
+    : new Map()
   semanticBindings = new Map(previous.bindings)
   if (targets.size === 0) retainPatchStatuses(previous.statuses)
   else resetPatchStatuses()

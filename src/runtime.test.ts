@@ -1071,6 +1071,38 @@ module.exports = [{
   changedProvider.rollback()
 })
 
+test('retains inspections across a target-free generation', () => {
+  const profile = join(root, 'retained-inspection-profile')
+  const provider = join(profile, 'node_modules', 'retained-inspection-provider')
+  const target = join(profile, 'node_modules', 'retained-inspection-target')
+  mkdirSync(provider, { recursive: true })
+  mkdirSync(join(target, 'lib'), { recursive: true })
+  writeFileSync(join(profile, 'package.json'), JSON.stringify({ dependencies: {
+    'retained-inspection-provider': '1',
+    'retained-inspection-target': '1',
+  } }))
+  writeFileSync(join(provider, 'package.json'), JSON.stringify({
+    name: 'retained-inspection-provider', dsh: { harmony: { patches: ['./patch.cjs'] } },
+  }))
+  writeFileSync(join(provider, 'patch.cjs'), `
+module.exports = {
+  id: 'value', target: { package: 'retained-inspection-target', file: 'lib/index.js' },
+  select: 'NumericLiteral', expect: 1,
+  apply({ node, edit }) { edit.overwrite(node.getStart(), node.getEnd(), '2') },
+}
+`)
+  writeFileSync(join(target, 'package.json'), JSON.stringify({ name: 'retained-inspection-target' }))
+  writeFileSync(join(target, 'lib/index.js'), 'export const value = 1\n')
+
+  synchronizeProfile(profile)
+  inspectPatchTargets()
+  expect(getPatchInspections()).toHaveLength(1)
+  const transaction = beginPluginUpdate(true)
+  expect(transaction.targets.size).toBe(0)
+  expect(getPatchInspections()).toHaveLength(1)
+  transaction.rollback()
+})
+
 test('applies providers in the persisted manual order', () => {
   const profile = join(root, 'ordered-profile')
   const target = join(root, 'ordered-target')
