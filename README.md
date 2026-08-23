@@ -148,6 +148,20 @@ Any DSH plugin package can describe its relationships with other plugins under `
 
 `requires` reports a missing, inactive, or incompatible dependency; `conflicts` warns when an incompatible pair is active; and `integrates` reports an available optional integration. These declarations never install, enable, disable, or block plugins. Targets are package names and values are semver ranges. Reciprocal conflict declarations produce one warning, and disabling a Harmony Patch does not disable its owning plugin.
 
+When a plugin must activate another Harmony Provider's bundle, declare it under `dsh.harmony.requires`. Harmony resolves it from the requiring package, adds its bundle as a temporary startup layer, and reuses an already configured bundle instead of creating a duplicate Loader entry. The dependency must still be installed by the package manager.
+
+```json
+{
+  "dsh": {
+    "harmony": {
+      "requires": {
+        "the-binding-of-dsh": ">=0.1.3 <0.2.0"
+      }
+    }
+  }
+}
+```
+
 Live reports use the plugins active in Loader. When the profile is stopped, Harmony can only inspect its installation and therefore treats installed profile packages as active.
 
 ## React-aware patches

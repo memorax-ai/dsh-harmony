@@ -152,6 +152,20 @@ Harmony 按一份全局 `patchOrder` 运行所有 Patch。Provider 级 `before` 
 
 `requires` 报告缺失、未启用或版本不匹配的依赖，`conflicts` 警告同时启用的不兼容组合，`integrates` 报告当前可用的可选联动。声明只用于检测和展示，不会安装、启用、停用或阻止插件。目标使用包名，值使用 semver 范围；双方重复声明冲突时只产生一条警告。停用 Harmony Patch 不等于停用其所属插件。
 
+如果一个插件必须激活另一个 Harmony Provider 的 bundle，请在 `dsh.harmony.requires` 中声明。Harmony 会从声明方包的位置解析依赖，将其 bundle 作为临时启动层加入；如果该 bundle 已经在 profile 中配置，则直接复用，不会创建重复的 Loader entry。依赖包本身仍须由包管理器安装。
+
+```json
+{
+  "dsh": {
+    "harmony": {
+      "requires": {
+        "the-binding-of-dsh": ">=0.1.3 <0.2.0"
+      }
+    }
+  }
+}
+```
+
 实时报告使用 Loader 中实际启用的插件。配置停止运行时，Harmony 只能检查安装情况，因此会把配置中已安装的包视为已启用。
 
 ## React-aware Patch

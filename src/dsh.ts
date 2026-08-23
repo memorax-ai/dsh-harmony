@@ -1,7 +1,9 @@
+import { readFileSync, realpathSync } from 'node:fs'
 import { createRequire, findPackageJSON } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { EntryOptions } from '@deepseek-ai/cordis-plugin-loader'
+import semver from 'semver'
 
 type AppBoot = typeof import('@deepseek-ai/dsh-app-boot')
 
@@ -40,15 +42,53 @@ function collectEntryPackages(entries: readonly EntryOptions[], packages: Set<st
   }
 }
 
-export function configuredProfileCandidates(
+interface DshPackageManifest {
+  name: string
+  version?: string
+  dsh?: {
+    bundle?: { patch?: string }
+    harmony?: { requires?: Record<string, string> }
+  }
+}
+
+export interface ConfiguredProfileActivation {
+  candidates: string[]
+  patches: string[]
+}
+
+function readManifest(path: string): DshPackageManifest {
+  return JSON.parse(readFileSync(path, 'utf8')) as DshPackageManifest
+}
+
+function harmonyRequirements(manifest: DshPackageManifest): Record<string, string> {
+  const value = manifest.dsh?.harmony?.requires
+  if (value === undefined) return {}
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError(`dsh-harmony: ${JSON.stringify(manifest.name)} dsh.harmony.requires must be an object`)
+  }
+  for (const [name, range] of Object.entries(value)) {
+    if (name.length === 0 || typeof range !== 'string' || semver.validRange(range) === null) {
+      throw new TypeError(`dsh-harmony: ${JSON.stringify(manifest.name)} has invalid Harmony Provider requirement ${JSON.stringify(name)}`)
+    }
+  }
+  return value
+}
+
+function realFile(path: string): string {
+  try { return realpathSync(path) } catch { return resolve(path) }
+}
+
+export function configuredProfileActivation(
   name: string,
   profileDir: string,
   patchFiles: string[] = [],
   userLayer = true,
-): string[] {
+): ConfiguredProfileActivation {
   const profileApi = appBoot as Partial<Pick<AppBoot,
     'composeEntries' | 'loadOptionalPatches' | 'loadOverlayPatches' | 'loadProfile'>>
-  if (typeof profileApi.loadProfile !== 'function' || typeof profileApi.composeEntries !== 'function') return []
+  if (typeof profileApi.loadProfile !== 'function' || typeof profileApi.composeEntries !== 'function') {
+    return { candidates: [], patches: [] }
+  }
   const home = dirname(dirname(profileDir))
   const profile = profileApi.loadProfile('dsh', name, dshInstallAnchor, home, { userLayer })
   const layers = [
@@ -61,18 +101,18 @@ export function configuredProfileCandidates(
       layers.push(patchFiles.flatMap(file => profileApi.loadOverlayPatches!('dsh', resolve(file))))
     }
   }
-  const packages = new Set(profile.layers.map(layer => layer.packageName))
-  collectEntryPackages(profileApi.composeEntries(layers), packages)
+  const configuredPackages = new Set(profile.layers.map(layer => layer.packageName))
+  collectEntryPackages(profileApi.composeEntries(layers), configuredPackages)
   const bundleManifests = new Map(profile.layers.map(layer => [
     layer.packageName,
     join(layer.packageDir, 'package.json'),
   ]))
   const anchors = [
     join(profileDir, 'package.json'),
-    ...profile.layers.map(layer => join(layer.packageDir, 'package.json')),
+    ...profile.layers.map(layer => join(realpathSync(layer.packageDir), 'package.json')),
     dshInstallAnchor,
   ]
-  return [...packages].map(packageName => {
+  const manifests = [...configuredPackages].map(packageName => {
     const bundled = bundleManifests.get(packageName)
     if (bundled !== undefined) return bundled
     for (const anchor of anchors) {
@@ -83,4 +123,59 @@ export function configuredProfileCandidates(
     }
     return packageName
   })
+
+  const candidates = new Map<string, string>()
+  const requiredPatches: string[] = []
+  const knownPatches = new Set(patchFiles.map(file => realFile(file)))
+  const visiting = new Set<string>()
+  const visited = new Set<string>()
+  const visit = (manifestPath: string): void => {
+    if (!manifestPath.endsWith('package.json')) return
+    const canonical = realFile(manifestPath)
+    if (visited.has(canonical) || visiting.has(canonical)) return
+    visiting.add(canonical)
+    const manifest = readManifest(canonical)
+    candidates.set(manifest.name, manifestPath)
+    for (const [requiredName, range] of Object.entries(harmonyRequirements(manifest))) {
+      let requiredManifest: string | undefined
+      try { requiredManifest = findPackageJSON(requiredName, pathToFileURL(canonical)) } catch {}
+      if (requiredManifest === undefined) {
+        throw new Error(`dsh-harmony: ${manifest.name} requires Harmony Provider ${requiredName}@${range}, but it is not installed`)
+      }
+      const requiredCanonical = realFile(requiredManifest)
+      const required = readManifest(requiredCanonical)
+      if (required.name !== requiredName || !semver.satisfies(required.version ?? '0.0.0', range, { includePrerelease: true })) {
+        throw new Error(`dsh-harmony: ${manifest.name} requires Harmony Provider ${requiredName}@${range}, found ${required.name}@${required.version ?? '0.0.0'}`)
+      }
+      if (required.dsh?.harmony === undefined) {
+        throw new Error(`dsh-harmony: ${manifest.name} requires ${requiredName}@${range}, but it is not a Harmony Provider`)
+      }
+      visit(requiredCanonical)
+      candidates.set(required.name, requiredManifest)
+      const declaredPatch = required.dsh.bundle?.patch
+      if (declaredPatch === undefined || configuredPackages.has(required.name)) continue
+      const patch = realFile(join(dirname(requiredCanonical), declaredPatch))
+      if (!knownPatches.has(patch)) {
+        knownPatches.add(patch)
+        requiredPatches.push(patch)
+      }
+      configuredPackages.add(required.name)
+    }
+    visiting.delete(canonical)
+    visited.add(canonical)
+  }
+  for (const manifest of manifests) visit(manifest)
+  for (const manifest of manifests) {
+    if (!manifest.endsWith('package.json')) candidates.set(manifest, manifest)
+  }
+  return { candidates: [...candidates.values()], patches: requiredPatches }
+}
+
+export function configuredProfileCandidates(
+  name: string,
+  profileDir: string,
+  patchFiles: string[] = [],
+  userLayer = true,
+): string[] {
+  return configuredProfileActivation(name, profileDir, patchFiles, userLayer).candidates
 }

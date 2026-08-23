@@ -2,7 +2,7 @@ import { channel } from 'node:diagnostics_channel'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { configuredProfileCandidates, dshEntry, initProfile, PROFILE_TEMPLATES } from './dsh.js'
+import { configuredProfileActivation, dshEntry, initProfile, PROFILE_TEMPLATES } from './dsh.js'
 import {
   discoverProfile,
   inspectPatchTargetsAsync,
@@ -63,11 +63,13 @@ export async function launchDsh(args: string[], profile: string | undefined, pro
     initProfile(profileDir, PROFILE_TEMPLATES[profile])
   }
 
+  let requiredProviderPatches: string[] = []
   if (!isPluginCommand && profileDir !== undefined && existsSync(join(profileDir, 'package.json'))) {
     const measure = process.env.DSH_HARMONY_PERF === '1' || loadPerformanceChannel.hasSubscribers
     const started = measure ? process.hrtime.bigint() : undefined
-    const configured = configuredProfileCandidates(profile!, profileDir, launcherPatchFiles(args), !isDefaultDump)
-    discoverProfile(profileDir, injectHarmony, configured)
+    const activation = configuredProfileActivation(profile!, profileDir, launcherPatchFiles(args), !isDefaultDump)
+    requiredProviderPatches = activation.patches
+    discoverProfile(profileDir, injectHarmony, activation.candidates)
     const transformed = measure ? process.hrtime.bigint() : undefined
     const inspections = await inspectPatchTargetsAsync()
     if (started !== undefined && transformed !== undefined) {
@@ -82,9 +84,13 @@ export async function launchDsh(args: string[], profile: string | undefined, pro
     }
   }
 
-  if (injectHarmony) {
-    if (args[0] === 'web') process.argv.splice(3, 0, '--patch', overlay)
-    else process.argv.splice(2, 0, '--patch', overlay)
+  const harmonyPatches = [
+    ...requiredProviderPatches,
+    ...(injectHarmony ? [overlay] : []),
+  ]
+  if (harmonyPatches.length > 0) {
+    const index = args[0] === 'web' ? 3 : 2
+    process.argv.splice(index, 0, ...harmonyPatches.flatMap(patch => ['--patch', patch]))
   }
 
   await import(pathToFileURL(dshEntry).href)
