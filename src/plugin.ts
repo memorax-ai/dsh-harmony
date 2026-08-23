@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { channel } from 'node:diagnostics_channel'
 import { readFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import { findPackageJSON } from 'node:module'
 import type { AddressInfo } from 'node:net'
 import { basename, join } from 'node:path'
 import type { ClientModuleRegistry } from '@deepseek-ai/dsh-client-modules'
@@ -35,6 +36,7 @@ import {
   inspectUnresolvedPatchTargetsAsync,
   packageNameOf,
   prepareModuleReload,
+  resolveProfileDependency,
   subscribe,
   subscribePatchStatuses,
   watchProfile,
@@ -101,7 +103,13 @@ function loaderInventory(ctx: Context): { packages: string[]; active: HarmonyAct
   for (const entry of ctx.loader.entries()) {
     const name = packageNameOf(entry.options.name)
     if (name === undefined) continue
-    packages.add(name)
+    const baseUrl = entry.parent?.tree?.ctx?.baseUrl
+    const selectedDirectory = resolveProfileDependency(name, baseUrl)
+    let candidate = selectedDirectory === undefined ? name : join(selectedDirectory, 'package.json')
+    if (selectedDirectory === undefined && baseUrl !== undefined) {
+      try { candidate = findPackageJSON(name, baseUrl) ?? name } catch {}
+    }
+    packages.add(candidate)
     if (entry.options.group || entry.disabled) continue
     const entryIds = active.get(name) ?? []
     entryIds.push(entry.id)

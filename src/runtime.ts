@@ -132,6 +132,7 @@ interface TargetFileRecord {
 
 interface GenerationState {
   providers: ProviderRecord[]
+  profileDependencies: Map<string, string>
   order: string[]
   patchOrder: string[]
   disabled: Set<string>
@@ -184,10 +185,11 @@ let semanticBindings = new Map<string, SemanticDispatcher>()
 let generation = 0
 let generationSequence = 0
 const generationStates = new Map<number, GenerationState>([[0, {
-  providers: [], order: [], patchOrder: [], disabled: new Set(), patchesByPackage: new Map(),
+  providers: [], profileDependencies: new Map(), order: [], patchOrder: [], disabled: new Set(), patchesByPackage: new Map(),
   hasCompositePatches: false, targetFileSuffixes: new Set(),
 }]])
 let activeProfileDir: string | undefined
+let profileDependencies = new Map<string, string>()
 let requestedProfilePackages: string[] | undefined
 let additionalProfilePackages: string[] = []
 let profileSnapshot: HarmonyProfile | undefined
@@ -200,6 +202,33 @@ let refreshWatchedFiles: (() => void) | undefined
 let startupPerformance: HarmonyStartupPerformance | undefined
 let parallelInspectionTaskGeneration = -1
 let inspectionWorkerPool: Worker[] = []
+
+function profileDependencyDirectories(profile: HarmonyProfile): Map<string, string> {
+  return new Map(profile.plugins.map(plugin => {
+    const info = readPackageInfo(plugin.dir)
+    if (info.name !== plugin.name || info.version !== plugin.version) {
+      throw new Error(`dsh-harmony: profile candidate ${JSON.stringify(plugin.name)} changed while it was being prepared (expected ${plugin.version}, found ${info.name}@${info.version})`)
+    }
+    return [plugin.name, info.dir]
+  }))
+}
+
+function selectedProfilePackage(packageName: string, requestedGeneration = generation): PackageInfo | undefined {
+  const state = generationStates.get(requestedGeneration)
+  const directory = state === undefined
+    ? profileDependencies.get(packageName)
+    : state.profileDependencies.get(packageName)
+  if (directory !== undefined) {
+    try { return readPackageInfo(directory) } catch { return undefined }
+  }
+  if (activeProfileDir === undefined) return undefined
+  try {
+    const manifest = findPackageJSON(packageName, pathToFileURL(join(activeProfileDir, 'package.json')))
+    return manifest === undefined ? undefined : readPackageInfo(dirname(manifest))
+  } catch {
+    return undefined
+  }
+}
 
 export function recordStartupPerformance(value: HarmonyStartupPerformance): void {
   startupPerformance = value
@@ -350,6 +379,31 @@ function addChangedProviderDependencyTargets(
       || !unchangedProviderGraph(current, candidate)) continue
     addPatchTargets(targets, current.patches)
     addPatchTargets(targets, candidate.patches)
+  }
+}
+
+function addChangedProfileDependencyTargets(
+  targets: PatchTargets,
+  previousRecords: Iterable<ProviderRecord>,
+  nextRecords: Iterable<ProviderRecord>,
+  previousDependencies: Map<string, string>,
+  nextDependencies: Map<string, string>,
+  previousVersions: Map<string, string | undefined>,
+  nextVersions: Map<string, string | undefined>,
+): void {
+  const changedPackages = new Set([...previousDependencies.keys(), ...nextDependencies.keys()].filter(name => (
+    previousDependencies.get(name) !== nextDependencies.get(name)
+    || previousVersions.get(name) !== nextVersions.get(name)
+  )))
+  for (const records of [previousRecords, nextRecords]) {
+    for (const provider of records) {
+      for (const registered of provider.patches) {
+        for (const patch of registered.members) {
+          if (!changedPackages.has(patch.target.package)) continue
+          for (const file of patchTargetFiles(patch)) addTarget(targets, patch.target.package, file)
+        }
+      }
+    }
   }
 }
 
@@ -526,6 +580,7 @@ function snapshotGeneration(retainedGeneration?: number, inheritTargetIndex = fa
   }
   generationStates.set(generation, {
     providers: generationProviders,
+    profileDependencies: new Map(profileDependencies),
     order: [...providerOrder],
     patchOrder: [...patchOrder],
     disabled: new Set(disabledPatchKeys),
@@ -658,7 +713,7 @@ function prepareProvider(
   const declaredFiles = info.harmony.patches.map(declared => realpathSync(join(info.dir, declared)))
   const files = providerFiles(declaredFiles, info.dir, observed)
   const signature = providerSignature(info, files)
-  if (current?.signature === signature) return current
+  if (current?.info.dir === info.dir && current.signature === signature) return current
   const registered: RegisteredPatch[] = []
   const ids = new Set<string>()
   let index = 0
@@ -790,6 +845,7 @@ export function synchronizeProfile(
       for (const filename of record.files) loadedPatchFiles.add(filename)
     }
     activeProfileDir = profileDir
+    profileDependencies = profileDependencyDirectories(profile)
     requestedProfilePackages = installed === undefined ? undefined : [...installed]
     additionalProfilePackages = [...additional]
     activePlugins = enabledPlugins ?? profile.plugins.map(plugin => ({ name: plugin.name, entryIds: [] }))
@@ -800,6 +856,7 @@ export function synchronizeProfile(
     const patchOrderChanged = previousPatchOrder.length !== patchOrder.length
       || previousPatchOrder.some((key, index) => key !== patchOrder[index])
     if (registryChanged || orderChanged || patchOrderChanged || disabledChanged) notify(changedTargets)
+    generationStates.get(generation)!.profileDependencies = new Map(profileDependencies)
     if (previousWorkerThreads !== workerThreads) transformCache.clear()
     profileSnapshot = { ...profile, patchOrder: [...patchOrder] }
     return profileSnapshot
@@ -916,6 +973,8 @@ export function beginStartupUpdate(enabledPlugins: HarmonyActivePlugin[]): Profi
       workerThreads = next.profile.workerThreads
       activePlugins = enabledPlugins
       profileSnapshot = next.profile
+      profileDependencies = profileDependencyDirectories(next.profile)
+      generationStates.get(generation)!.profileDependencies = new Map(profileDependencies)
       stagedProviderCaches.clear()
       refreshWatchedFiles?.()
       active = false
@@ -940,6 +999,7 @@ export function beginPluginUpdate(
   const nextDeclared = next.declared
   const nextPatchOrder = next.patchOrder
   const nextProfile = { ...profile, patchOrder: nextPatchOrder }
+  const nextProfileDependencies = profileDependencyDirectories(profile)
   const previous = {
     providers: new Map(providers),
     declared: declaredProviderFiles,
@@ -951,9 +1011,17 @@ export function beginPluginUpdate(
     cache: transformCache,
     statuses: patchStatuses,
     bindings: semanticBindings,
+    profileDependencies,
   }
   const orderChanged = previous.order.length !== profile.order.length
     || previous.order.some((name, index) => name !== profile.order[index])
+  const previousVersions = new Map(profileSnapshot?.plugins.map(plugin => [plugin.name, plugin.version]))
+  const nextVersions = new Map(profile.plugins.map(plugin => [plugin.name, plugin.version]))
+  const selectionChanged = previous.profileDependencies.size !== nextProfileDependencies.size
+    || [...nextProfileDependencies].some(([name, directory]) => (
+      previous.profileDependencies.get(name) !== directory
+      || previousVersions.get(name) !== nextVersions.get(name)
+    ))
   const changed = previous.providers.size !== nextProviders.size
     || [...nextProviders].some(([name, record]) => previous.providers.get(name) !== record)
     || previous.patchOrder.length !== nextPatchOrder.length
@@ -961,6 +1029,7 @@ export function beginPluginUpdate(
     || previous.disabled.size !== profile.disabled.length
     || profile.disabled.some(key => !previous.disabled.has(key))
     || previous.workerThreads !== profile.workerThreads
+    || selectionChanged
   if (!changed && !force) {
     let active = true
     return {
@@ -981,6 +1050,8 @@ export function beginPluginUpdate(
         additionalProfilePackages = [...additional]
         activePlugins = enabledPlugins
         profileSnapshot = nextProfile
+        profileDependencies = nextProfileDependencies
+        generationStates.get(generation)!.profileDependencies = new Map(profileDependencies)
         stagedProviderCaches.clear()
         refreshWatchedFiles?.()
         active = false
@@ -999,6 +1070,12 @@ export function beginPluginUpdate(
     nextProviders.values(), nextPatchOrder, nextDisabled,
   )
   addChangedProviderDependencyTargets(targets, previous.providers, nextProviders)
+  addChangedProfileDependencyTargets(
+    targets,
+    previous.providers.values(), nextProviders.values(),
+    previous.profileDependencies, nextProfileDependencies,
+    previousVersions, nextVersions,
+  )
   try {
     replaceProviders(nextProviders)
     declaredProviderFiles = nextDeclared
@@ -1025,6 +1102,7 @@ export function beginPluginUpdate(
   semanticBindings = new Map(previous.bindings)
   if (targets.size === 0) retainPatchStatuses(previous.statuses)
   else resetPatchStatuses()
+  profileDependencies = nextProfileDependencies
   snapshotGeneration(previous.generation, targets.size === 0)
   let active = true
   return {
@@ -1061,6 +1139,7 @@ export function beginPluginUpdate(
       transformCache = previous.cache
       patchStatuses = previous.statuses
       semanticBindings = previous.bindings
+      profileDependencies = previous.profileDependencies
       pendingStatusGenerations.delete(candidateGeneration)
       for (const restore of [...stagedProviderCaches.values()].reverse()) restore()
       stagedProviderCaches.clear()
@@ -1503,7 +1582,10 @@ function targetFilename(
   const state = generationStates.get(requestedGeneration)
   if (state === undefined) return undefined
   const absolute = isAbsolute(filename) ? filename : resolve(filename)
-  const target = state.targetFiles?.get(absolute)?.filename
+  let target = state.targetFiles?.get(absolute)?.filename
+  if (target === undefined) {
+    try { target = state.targetFiles?.get(canonicalFilename(absolute))?.filename } catch {}
+  }
   if (target !== undefined) return target
   if (state.targetIndexComplete === true && !discoverTarget) return undefined
   const normalized = absolute.replaceAll('\\', '/')
@@ -1820,12 +1902,7 @@ function patchComponents(items: RegisteredPatch[]): RegisteredPatch[][] {
   const targetKeys = (patch: HarmonyPatch): string[] => {
     let pkg = resolvedPackages.get(patch.target.package)
     if (!resolvedPackages.has(patch.target.package)) {
-      try {
-        const manifest = findPackageJSON(patch.target.package, pathToFileURL(join(activeProfileDir!, 'package.json')))
-        pkg = manifest === undefined ? undefined : readPackageInfo(dirname(manifest))
-      } catch {
-        pkg = undefined
-      }
+      pkg = selectedProfilePackage(patch.target.package)
       resolvedPackages.set(patch.target.package, pkg)
     }
     if (pkg !== undefined) {
@@ -2018,7 +2095,6 @@ function inspectTargets(
   onlyKeys?: ReadonlySet<string>,
   transformGeneration = generation,
 ): ParallelInspectionResult {
-  const profileManifest = pathToFileURL(join(activeProfileDir!, 'package.json'))
   const ordered = orderedPatches([...providers.values()].flatMap(provider => provider.patches), order)
   const allPatches = onlyKeys === undefined ? ordered : ordered.filter(item => onlyKeys.has(item.key))
   const patchesByTargetPackage = new Map<string, Array<{
@@ -2046,11 +2122,8 @@ function inspectTargets(
   const failures = new Map<string, string>()
   const warnings = new Map<string, string[]>()
   for (const [packageName, targetPatches] of patchesByTargetPackage) {
-    let manifest: string | undefined
-    try {
-      manifest = findPackageJSON(packageName, profileManifest)
-    } catch {}
-    if (manifest === undefined) {
+    const pkg = selectedProfilePackage(packageName, transformGeneration)
+    if (pkg === undefined) {
       targetIndexComplete = false
       const error = `dsh-harmony: target package ${JSON.stringify(packageName)} is not installed`
       for (const { item } of targetPatches) {
@@ -2058,8 +2131,7 @@ function inspectTargets(
       }
       continue
     }
-    const packageDir = dirname(manifest)
-    const pkg = readPackageInfo(packageDir)
+    const packageDir = pkg.dir
     packageCache.set(pkg.dir, pkg)
     for (const { item, members } of targetPatches) {
       for (const patch of members) {
@@ -2224,6 +2296,16 @@ export function installFileTransforms(): void {
   })
 }
 
+export function resolveProfileDependency(
+  specifier: string,
+  _parentUrl: string | undefined,
+  requestedGeneration = generation,
+): string | undefined {
+  const packageName = packageNameOf(specifier)
+  if (packageName === undefined) return undefined
+  return generationStates.get(requestedGeneration)?.profileDependencies.get(packageName)
+}
+
 export function installModuleHooks(): void {
   installNodeModuleHooks({
     aliases: { index: indexUrl, plugin: pluginUrl, settings: settingsUrl, manifest: manifestUrl },
@@ -2231,6 +2313,7 @@ export function installModuleHooks(): void {
     canonicalFilename,
     targetFilename: (filename, requestedGeneration) => targetFilename(filename, requestedGeneration, true),
     packageDirectory: filename => packageFor(filename)?.dir,
+    resolveProfileDependency,
     resolveTypeScriptDependency,
     activeTypeScriptLoader,
     transpileTypeScript,
@@ -2245,17 +2328,33 @@ export function prepareModuleReload(
   baseUrl?: string,
   packageUpdates = new Map<string, () => void>(),
 ): { restore(): void; load?: () => unknown } | undefined {
-  const localRequire = createRequire(baseUrl ?? import.meta.url)
-  const containingFile = baseUrl?.startsWith('file:') ? fileURLToPath(baseUrl) : baseUrl ?? fileURLToPath(import.meta.url)
-  const filename = ts.resolveModuleName(
-    specifier.replace(/\?dsh-harmony=\d+$/, ''),
-    containingFile,
-    { allowJs: true, module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext },
-    ts.sys,
-    undefined,
-    undefined,
-    ts.ModuleKind.ESNext,
-  ).resolvedModule?.resolvedFileName
+  const cleanSpecifier = specifier.replace(/\?dsh-harmony=\d+$/, '')
+  let localRequire = createRequire(baseUrl ?? import.meta.url)
+  const profileDirectory = resolveProfileDependency(cleanSpecifier, baseUrl)
+  let filename: string | undefined
+  if (profileDirectory !== undefined) {
+    localRequire = createRequire(join(profileDirectory, 'package.json'))
+    try {
+      filename = localRequire.resolve(cleanSpecifier)
+    } catch {}
+    if (filename === undefined || packageFor(filename)?.dir !== profileDirectory) {
+      const packageName = packageNameOf(cleanSpecifier)!
+      const subpath = cleanSpecifier.slice(packageName.length + 1)
+      const target = subpath === '' ? profileDirectory : join(profileDirectory, subpath)
+      try { filename = localRequire.resolve(target) } catch { filename = undefined }
+    }
+  } else {
+    const containingFile = baseUrl?.startsWith('file:') ? fileURLToPath(baseUrl) : baseUrl ?? fileURLToPath(import.meta.url)
+    filename = ts.resolveModuleName(
+      cleanSpecifier,
+      containingFile,
+      { allowJs: true, module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext },
+      ts.sys,
+      undefined,
+      undefined,
+      ts.ModuleKind.ESNext,
+    ).resolvedModule?.resolvedFileName
+  }
   if (filename === undefined) return undefined
   const pkg = packageFor(filename)
   if (pkg === undefined) return undefined

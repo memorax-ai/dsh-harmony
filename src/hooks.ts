@@ -1,6 +1,6 @@
 import fs from 'node:fs'
-import { registerHooks, syncBuiltinESMExports } from 'node:module'
-import { dirname, isAbsolute, relative } from 'node:path'
+import { createRequire, registerHooks, syncBuiltinESMExports } from 'node:module'
+import { dirname, isAbsolute, join, relative } from 'node:path'
 import { fileURLToPath, pathToFileURL, URL } from 'node:url'
 
 const nativeReadFileSync = fs.readFileSync.bind(fs)
@@ -64,6 +64,7 @@ export interface ModuleTransformHooks<Loader> {
   canonicalFilename(filename: string): string
   targetFilename(filename: string, generation: number): string | undefined
   packageDirectory(filename: string): string | undefined
+  resolveProfileDependency(specifier: string, parentUrl: string | undefined, generation: number): string | undefined
   resolveTypeScriptDependency(specifier: string, parentUrl: string | undefined, generation: number): string | undefined
   activeTypeScriptLoader(filename: string, generation: number): Loader | undefined
   transpileTypeScript(filename: string, source: string, loader: Loader): { format: 'module' | 'commonjs'; source: string }
@@ -74,6 +75,7 @@ export interface ModuleTransformHooks<Loader> {
 
 export function installNodeModuleHooks<Loader>(runtime: ModuleTransformHooks<Loader>): void {
   if (moduleHooksInstalled) return
+  let resolvingProfileDependency = false
   const runtimeDirectory = dirname(fileURLToPath(runtime.aliases.manifest))
   const isRuntimeModule = (url: string): boolean => {
     if (!url.startsWith('file:')) return false
@@ -93,19 +95,56 @@ export function installNodeModuleHooks<Loader>(runtime: ModuleTransformHooks<Loa
       const inherited = context.parentURL?.startsWith('file:')
         ? new URL(context.parentURL).searchParams.get('dsh-harmony') ?? undefined
         : undefined
+      const requestedGeneration = Number(nextGeneration ?? inherited ?? runtime.currentGeneration())
       let result
-      try {
-        result = nextResolve(cleanSpecifier, context)
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ERR_MODULE_NOT_FOUND') throw error
-        const filename = runtime.resolveTypeScriptDependency(
-          cleanSpecifier,
-          context.parentURL,
-          Number(nextGeneration ?? inherited ?? runtime.currentGeneration()),
-        )
-        if (filename === undefined) throw error
-        result = { url: pathToFileURL(filename).href, shortCircuit: true }
-        nextGeneration ??= inherited
+      const profileDirectory = resolvingProfileDependency
+        ? undefined
+        : runtime.resolveProfileDependency(cleanSpecifier, context.parentURL, requestedGeneration)
+      if (profileDirectory !== undefined) {
+        const manifestUrl = pathToFileURL(join(profileDirectory, 'package.json'))
+        const directResult = () => {
+          const firstSlash = cleanSpecifier.indexOf('/')
+          const separator = cleanSpecifier.startsWith('@') ? cleanSpecifier.indexOf('/', firstSlash + 1) : firstSlash
+          const subpath = separator === -1 ? '' : cleanSpecifier.slice(separator + 1)
+          const target = subpath === '' ? profileDirectory : join(profileDirectory, subpath)
+          return { url: pathToFileURL(createRequire(manifestUrl).resolve(target)).href, shortCircuit: true }
+        }
+        try {
+          if (context.conditions.includes('require') && !context.conditions.includes('import')) {
+            resolvingProfileDependency = true
+            try {
+              result = { url: pathToFileURL(createRequire(manifestUrl).resolve(cleanSpecifier)).href, shortCircuit: true }
+            } finally {
+              resolvingProfileDependency = false
+            }
+          } else {
+            result = nextResolve(cleanSpecifier, { ...context, parentURL: manifestUrl.href })
+          }
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code
+          if (code !== 'ERR_MODULE_NOT_FOUND' && code !== 'MODULE_NOT_FOUND') throw error
+          result = directResult()
+        }
+        const resolvedDirectory = result.url.startsWith('file:')
+          ? runtime.packageDirectory(fileURLToPath(result.url))
+          : undefined
+        if (resolvedDirectory !== profileDirectory) {
+          result = directResult()
+        }
+      } else {
+        try {
+          result = nextResolve(cleanSpecifier, context)
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ERR_MODULE_NOT_FOUND') throw error
+          const filename = runtime.resolveTypeScriptDependency(
+            cleanSpecifier,
+            context.parentURL,
+            requestedGeneration,
+          )
+          if (filename === undefined) throw error
+          result = { url: pathToFileURL(filename).href, shortCircuit: true }
+          nextGeneration ??= inherited
+        }
       }
       if (nextGeneration === undefined && context.parentURL?.startsWith('file:') && result.url.startsWith('file:')) {
         if (inherited !== undefined) {

@@ -4,19 +4,34 @@ import { registerHooks } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { Context } from '@deepseek-ai/cordis'
+import Loader from '@deepseek-ai/cordis-plugin-loader'
 import { apply as harmonyApply } from '../lib/index.js'
 import {
   beginProfileUpdate,
   getPatchStatuses,
   installFileTransforms,
   installModuleHooks,
+  resolveProfileDependency,
   synchronizeProfile,
 } from '../lib/runtime.js'
 
 const profile = mkdtempSync(join(tmpdir(), 'dsh-harmony-module-hooks-'))
+const external = mkdtempSync(join(tmpdir(), 'dsh-harmony-module-hooks-external-'))
 const target = join(profile, 'node_modules/module-hook-target')
 const provider = join(profile, 'node_modules/module-hook-provider')
 const unrelated = join(profile, 'node_modules/unrelated-typescript-target')
+const transitiveFallback = join(profile, 'node_modules/module-hook-transitive')
+const transitive = join(profile, 'bundle/node_modules/module-hook-transitive')
+const importOnly = join(profile, 'bundle/node_modules/module-hook-import-only')
+const arbitrary = join(profile, 'arbitrary-package-directory')
+const arbitraryCommonJS = join(profile, 'arbitrary-commonjs-package-directory')
+const arbitraryFallback = join(profile, 'node_modules/module-hook-arbitrary')
+const esmProbe = join(profile, 'transitive-probe.mjs')
+const cjsProbe = join(profile, 'transitive-probe.cjs')
+const importOnlyProbe = join(profile, 'import-only-probe.mjs')
+const arbitraryProbe = join(external, 'arbitrary-probe.mjs')
+const arbitraryCommonJSProbe = join(external, 'arbitrary-commonjs-probe.cjs')
 const files = {
   array: join(target, 'lib/array.js'),
   typed: join(target, 'lib/typed.js'),
@@ -32,6 +47,12 @@ try {
   mkdirSync(join(target, 'lib'), { recursive: true })
   mkdirSync(provider)
   mkdirSync(unrelated)
+  mkdirSync(transitiveFallback)
+  mkdirSync(transitive, { recursive: true })
+  mkdirSync(importOnly)
+  mkdirSync(arbitrary)
+  mkdirSync(arbitraryCommonJS)
+  mkdirSync(arbitraryFallback)
   writeFileSync(join(profile, 'package.json'), JSON.stringify({ dependencies: {
     'module-hook-provider': '1',
     'module-hook-target': '1',
@@ -56,6 +77,38 @@ export function helper(): number { return value }
     name: 'unrelated-typescript-target', version: '1.0.0', type: 'module', main: 'index.ts',
   }))
   writeFileSync(join(unrelated, 'index.ts'), 'export const value: number = 1\n')
+  writeFileSync(join(transitiveFallback, 'package.json'), JSON.stringify({
+    name: 'module-hook-transitive', version: '0.0.1', type: 'module', exports: './index.js',
+  }))
+  writeFileSync(join(transitiveFallback, 'index.js'), 'export const selected = "fallback"\n')
+  writeFileSync(join(transitive, 'package.json'), JSON.stringify({
+    name: 'module-hook-transitive', version: '1.0.0', type: 'module',
+    exports: { '.': { import: './import.js', require: './require.cjs' } },
+  }))
+  writeFileSync(join(transitive, 'import.js'), 'export const selected = "import"\n')
+  writeFileSync(join(transitive, 'require.cjs'), 'module.exports = { selected: "require" }\n')
+  writeFileSync(join(importOnly, 'package.json'), JSON.stringify({
+    name: 'module-hook-import-only', version: '1.0.0', type: 'module',
+    exports: { '.': { import: './index.js' } },
+  }))
+  writeFileSync(join(importOnly, 'index.js'), 'export const selected = "import-only"\n')
+  writeFileSync(join(arbitrary, 'package.json'), JSON.stringify({
+    name: 'module-hook-arbitrary', version: '1.0.0', type: 'module', main: './index.js',
+  }))
+  writeFileSync(join(arbitrary, 'index.js'), 'export const selected = "arbitrary"\n')
+  writeFileSync(join(arbitraryCommonJS, 'package.json'), JSON.stringify({
+    name: 'module-hook-arbitrary-commonjs', version: '1.0.0', main: './index.cjs',
+  }))
+  writeFileSync(join(arbitraryCommonJS, 'index.cjs'), 'module.exports = { selected: "arbitrary-commonjs" }\n')
+  writeFileSync(join(arbitraryFallback, 'package.json'), JSON.stringify({
+    name: 'module-hook-arbitrary', version: '0.0.1', type: 'module', main: './index.js',
+  }))
+  writeFileSync(join(arbitraryFallback, 'index.js'), 'export const selected = "fallback"\n')
+  writeFileSync(esmProbe, 'export { selected } from "module-hook-transitive"\n')
+  writeFileSync(cjsProbe, 'module.exports = require("module-hook-transitive")\n')
+  writeFileSync(importOnlyProbe, 'export { selected } from "module-hook-import-only"\n')
+  writeFileSync(arbitraryProbe, 'export { selected } from "module-hook-arbitrary"\n')
+  writeFileSync(arbitraryCommonJSProbe, 'module.exports = require("module-hook-arbitrary-commonjs")\n')
   symlinkSync(files.alias, files.aliasLink)
   writeFileSync(join(provider, 'package.json'), JSON.stringify({
     name: 'module-hook-provider', version: '1.0.0',
@@ -98,7 +151,12 @@ module.exports = [
 ]
 `)
 
-  synchronizeProfile(profile)
+  synchronizeProfile(profile, undefined, undefined, [
+    join(transitive, 'package.json'),
+    join(importOnly, 'package.json'),
+    join(arbitrary, 'package.json'),
+    join(arbitraryCommonJS, 'package.json'),
+  ])
   const generation = getPatchStatuses().find(patch => patch.owner === 'module-hook-provider')?.generation
   assert.ok(generation !== undefined)
   const original = Object.fromEntries(Object.entries(files).map(([key, filename]) => [key, readFileSync(filename)]))
@@ -136,6 +194,36 @@ module.exports = [
   assert.equal(versionedRuntime.getPatchStatuses, getPatchStatuses)
   const versionedPackage = await import(`dsh-harmony?dsh-harmony=${generation}`)
   assert.equal(versionedPackage.apply, harmonyApply)
+  const transitiveSpecifier = 'module-hook-transitive'
+  assert.equal((await import(transitiveSpecifier)).selected, 'import')
+  assert.equal(
+    fs.realpathSync(resolveProfileDependency(transitiveSpecifier, pathToFileURL(esmProbe).href)!),
+    fs.realpathSync(transitive),
+  )
+  const transitiveModule = await import(pathToFileURL(esmProbe).href)
+  assert.equal(transitiveModule.selected, 'import')
+  const transitiveCommonJS = await import(pathToFileURL(cjsProbe).href)
+  assert.equal(transitiveCommonJS.default.selected, 'require')
+  const importOnlyModule = await import(pathToFileURL(importOnlyProbe).href)
+  assert.equal(importOnlyModule.selected, 'import-only')
+  assert.equal(
+    fs.realpathSync(resolveProfileDependency('module-hook-arbitrary', pathToFileURL(arbitraryProbe).href)!),
+    fs.realpathSync(arbitrary),
+  )
+  const arbitraryModule = await import(pathToFileURL(arbitraryProbe).href)
+  assert.equal(arbitraryModule.selected, 'arbitrary')
+  const arbitraryCommonJSModule = await import(pathToFileURL(arbitraryCommonJSProbe).href)
+  assert.equal(arbitraryCommonJSModule.default.selected, 'arbitrary-commonjs')
+
+  const loaderContext = new Context()
+  loaderContext.baseUrl = `${pathToFileURL(profile).href}/`
+  await loaderContext.plugin(Loader)
+  try {
+    const loaded = await loaderContext.loader.internal!.import(transitiveSpecifier, loaderContext.baseUrl, {})
+    assert.equal(loaded.selected, 'import')
+  } finally {
+    await loaderContext.fiber.dispose()
+  }
 
   const array = await import(`${urls.array}?dsh-harmony=${generation}`)
   const typed = await import(`${urls.typed}?dsh-harmony=${generation}`)
@@ -167,4 +255,5 @@ module.exports = [
   delete (globalThis as any).__dshHarmonyAliasApplications
   delete (globalThis as any).__dshHarmonyIdempotentApplications
   rmSync(profile, { recursive: true })
+  rmSync(external, { recursive: true })
 }
