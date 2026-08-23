@@ -119,6 +119,8 @@ export interface HarmonyPatchContext {
   node: ts.Node
   edit: MagicString
   ts: typeof ts
+  /** Query the current source AST, optionally restricted to one subtree. */
+  query(selector: string, root?: ts.Node): ts.Node[]
 }
 
 export interface HarmonyPatchStatus {

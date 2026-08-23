@@ -156,6 +156,47 @@ module.exports = {
   expect(readFileSync(join(unrelated, 'lib/index.js'), 'utf8')).toBe('export const unrelated = true\n')
 })
 
+test('does not repeat completed composite Patch inspection for unrelated module reads', () => {
+  const profile = join(root, 'completed-composite-index-profile')
+  const provider = join(profile, 'node_modules', 'completed-composite-index-provider')
+  const target = join(profile, 'node_modules', 'completed-composite-index-target')
+  const unrelated = join(profile, 'unrelated.js')
+  mkdirSync(provider, { recursive: true })
+  mkdirSync(target, { recursive: true })
+  writeFileSync(join(profile, 'package.json'), JSON.stringify({ dependencies: {
+    'completed-composite-index-provider': '1',
+    'completed-composite-index-target': '1',
+  } }))
+  writeFileSync(join(provider, 'package.json'), JSON.stringify({
+    name: 'completed-composite-index-provider', dsh: { harmony: { patches: ['./patch.cjs'] } },
+  }))
+  writeFileSync(join(provider, 'patch.cjs'), `
+const replace = (id, file, from, to) => ({
+  id, target: { package: 'completed-composite-index-target', file },
+  select: 'NumericLiteral[text="' + from + '"]', expect: 1,
+  apply({ node, edit }) {
+    globalThis.__completedCompositeIndexCalls = (globalThis.__completedCompositeIndexCalls || 0) + 1
+    edit.overwrite(node.getStart(), node.getEnd(), String(to))
+  },
+})
+module.exports = { id: 'atomic', patches: [
+  replace('first', 'a.js', 1, 2), replace('second', 'b.js', 3, 4),
+] }
+`)
+  writeFileSync(join(target, 'package.json'), JSON.stringify({ name: 'completed-composite-index-target' }))
+  writeFileSync(join(target, 'a.js'), 'export const a = 1\n')
+  writeFileSync(join(target, 'b.js'), 'export const b = 3\n')
+  writeFileSync(unrelated, 'export const unrelated = true\n')
+
+  synchronizeProfile(profile)
+  inspectPatchTargets()
+  ;(globalThis as any).__completedCompositeIndexCalls = 0
+
+  expect(readFileSync(unrelated, 'utf8')).toBe('export const unrelated = true\n')
+  expect((globalThis as any).__completedCompositeIndexCalls).toBe(0)
+  delete (globalThis as any).__completedCompositeIndexCalls
+})
+
 test('loads independent Source Patch file components with configured workers', async () => {
   const profile = join(root, 'parallel-inspection-profile')
   const provider = join(profile, 'node_modules', 'parallel-inspection-provider')
@@ -891,6 +932,52 @@ module.exports = {
     await update.commit()
     expect(retainedGenerationCount()).toBe(1)
   }
+})
+
+test('limits a Patch toggle transaction to its changed target pipeline', () => {
+  const profile = join(root, 'incremental-target-profile')
+  const provider = join(profile, 'node_modules', 'incremental-target-provider')
+  const first = join(profile, 'node_modules', 'incremental-target-first')
+  const second = join(profile, 'node_modules', 'incremental-target-second')
+  for (const directory of [provider, first, second]) mkdirSync(join(directory, 'lib'), { recursive: true })
+  writeFileSync(join(profile, 'package.json'), JSON.stringify({ dependencies: {
+    'incremental-target-provider': '1',
+    'incremental-target-first': '1',
+    'incremental-target-second': '1',
+  } }))
+  writeFileSync(join(provider, 'package.json'), JSON.stringify({
+    name: 'incremental-target-provider', dsh: { harmony: { patches: ['./patch.cjs'] } },
+  }))
+  const writeProvider = (firstValue: number): void => writeFileSync(join(provider, 'patch.cjs'), `
+module.exports = [{
+  id: 'first', target: { package: 'incremental-target-first', file: 'lib/index.js' },
+  select: 'NumericLiteral', expect: 1,
+  apply({ node, edit }) { edit.overwrite(node.getStart(), node.getEnd(), '${firstValue}') },
+}, {
+  id: 'second', target: { package: 'incremental-target-second', file: 'lib/index.js' },
+  select: 'NumericLiteral', expect: 1,
+  apply({ node, edit }) { edit.overwrite(node.getStart(), node.getEnd(), '3') },
+}]
+`)
+  writeProvider(2)
+  for (const [directory, name] of [[first, 'incremental-target-first'], [second, 'incremental-target-second']] as const) {
+    writeFileSync(join(directory, 'package.json'), JSON.stringify({ name }))
+    writeFileSync(join(directory, 'lib/index.js'), 'export const value = 1\n')
+  }
+
+  synchronizeProfile(profile)
+  const transaction = beginProfileUpdate({ disabled: ['incremental-target-provider/first'] })
+  expect([...transaction.targets].map(([name, files]) => [name, [...files]])).toEqual([
+    ['incremental-target-first', ['lib/index.js']],
+  ])
+  transaction.rollback()
+
+  writeProvider(4)
+  const changedProvider = beginPluginUpdate(true)
+  expect([...changedProvider.targets].map(([name, files]) => [name, [...files]])).toEqual([
+    ['incremental-target-first', ['lib/index.js']],
+  ])
+  changedProvider.rollback()
 })
 
 test('applies providers in the persisted manual order', () => {

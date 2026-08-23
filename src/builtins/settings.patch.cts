@@ -1,4 +1,3 @@
-import { tsquery } from '@phenomnomnominal/tsquery'
 import type ts from 'typescript'
 import type { HarmonySourcePatch } from '../index.js'
 
@@ -19,16 +18,16 @@ const patch: HarmonySourcePatch = {
   },
   select: 'SourceFile',
   expect: 1,
-  apply({ sourceFile, edit, ts: typescript }) {
+  apply({ sourceFile, edit, ts: typescript, query }) {
     const settingsPanel = exactlyOne(
-      tsquery(sourceFile, 'FunctionDeclaration').filter((node) => {
+      query('FunctionDeclaration').filter((node) => {
         const declaration = node as ts.FunctionDeclaration
         return declaration.name?.text === 'SettingsPanel'
       }),
       'SettingsPanel declaration',
     )
     const panelClass = exactlyOne(
-      tsquery(settingsPanel, 'PropertyAssignment').filter((node) => {
+      query('PropertyAssignment', settingsPanel).filter((node) => {
         const property = node as ts.PropertyAssignment
         return property.name.getText(sourceFile) === 'className'
           && property.initializer.getText(sourceFile) === 'SettingsRoot_module_css_default.panel'
@@ -42,7 +41,7 @@ const patch: HarmonySourcePatch = {
     )
 
     const navIcon = exactlyOne(
-      tsquery(sourceFile, 'FunctionDeclaration').filter((node) => {
+      query('FunctionDeclaration').filter((node) => {
         const declaration = node as ts.FunctionDeclaration
         return declaration.name?.text === 'navIcon'
       }),
@@ -56,20 +55,20 @@ const patch: HarmonySourcePatch = {
 \t\t\t});`)
 
     const close = exactlyOne(
-      tsquery(sourceFile, 'VariableDeclaration').filter((node) => {
+      query('VariableDeclaration').filter((node) => {
         const declaration = node as ts.VariableDeclaration
         return typescript.isIdentifier(declaration.name) && declaration.name.text === 'close'
       }),
       'close declaration',
     )
-    const closeCallback = exactlyOne(tsquery(close, 'ArrowFunction'), 'close callback') as ts.ArrowFunction
+    const closeCallback = exactlyOne(query('ArrowFunction', close), 'close callback') as ts.ArrowFunction
     edit.prependLeft(closeCallback.getStart(sourceFile), 'async ')
     edit.prependLeft(closeCallback.body.getStart(sourceFile) + 1, `
         const harmonyGuard = globalThis.__dshHarmonyBeforeSettingsClose;
         if (harmonyGuard && !await harmonyGuard()) return;`)
 
     const onSelect = exactlyOne(
-      tsquery(sourceFile, 'PropertyAssignment').filter((node) => {
+      query('PropertyAssignment').filter((node) => {
         const property = node as ts.PropertyAssignment
         return property.name.getText(sourceFile) === 'onSelect'
           && property.initializer.getText(sourceFile) === 'setActiveId'

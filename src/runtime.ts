@@ -50,6 +50,7 @@ import {
   sourceDelta,
   type BoundSemanticPatch,
   type BoundSourceTrace,
+  type SourceAst,
   type SourceDelta,
 } from './transform.js'
 
@@ -70,6 +71,8 @@ interface RegisteredPatch {
   key: string
   index: number
   declaration: string
+  fingerprint: string
+  pipelineFingerprint: string
 }
 
 interface ProviderRecord {
@@ -279,6 +282,77 @@ function allTargets(): PatchTargets {
   return targets
 }
 
+function patchGraphFingerprint(patch: HarmonyPatchDeclaration): string {
+  return createHash('sha256').update(JSON.stringify(patch, (_key, value: unknown) => (
+    typeof value === 'function' ? Function.prototype.toString.call(value) : value
+  ))).digest('base64url')
+}
+
+function targetPipelines(
+  records: Iterable<ProviderRecord>,
+  order: string[],
+  disabled: Set<string>,
+): Map<string, string[]> {
+  const pipelines = new Map<string, string[]>()
+  for (const registered of orderedPatches([...records].flatMap(provider => provider.patches), order)) {
+    if (isPatchDisabled(registered, disabled)) continue
+    registered.members.forEach((patch, memberIndex) => {
+      for (const file of patchTargetFiles(patch)) {
+        const key = `${patch.target.package}\0${posix.normalize(file.replaceAll('\\', '/'))}`
+        const pipeline = pipelines.get(key) ?? []
+        pipeline.push(`${registered.key}\0${registered.pipelineFingerprint}\0${memberIndex}`)
+        pipelines.set(key, pipeline)
+      }
+    })
+  }
+  return pipelines
+}
+
+function changedPipelineTargets(
+  previousRecords: Iterable<ProviderRecord>,
+  previousOrder: string[],
+  previousDisabled: Set<string>,
+  nextRecords: Iterable<ProviderRecord>,
+  nextOrder: string[],
+  nextDisabled: Set<string>,
+): PatchTargets {
+  const previous = targetPipelines(previousRecords, previousOrder, previousDisabled)
+  const next = targetPipelines(nextRecords, nextOrder, nextDisabled)
+  const targets: PatchTargets = new Map()
+  for (const key of new Set([...previous.keys(), ...next.keys()])) {
+    const before = previous.get(key)
+    const after = next.get(key)
+    if (before !== undefined && after !== undefined && before.length === after.length
+      && before.every((value, index) => value === after[index])) continue
+    const separator = key.indexOf('\0')
+    addTarget(targets, key.slice(0, separator), key.slice(separator + 1))
+  }
+  return targets
+}
+
+function unchangedProviderGraph(previous: ProviderRecord, next: ProviderRecord): boolean {
+  return previous.patches.length === next.patches.length
+    && previous.patches.every((patch, index) => {
+      const candidate = next.patches[index]
+      return candidate !== undefined && patch.key === candidate.key
+        && patch.pipelineFingerprint === candidate.pipelineFingerprint
+    })
+}
+
+function addChangedProviderDependencyTargets(
+  targets: PatchTargets,
+  previous: Map<string, ProviderRecord>,
+  next: Map<string, ProviderRecord>,
+): void {
+  for (const [name, candidate] of next) {
+    const current = previous.get(name)
+    if (current === undefined || current.signature === candidate.signature
+      || !unchangedProviderGraph(current, candidate)) continue
+    addPatchTargets(targets, current.patches)
+    addPatchTargets(targets, candidate.patches)
+  }
+}
+
 function targetsOf(records: Iterable<ProviderRecord>): PatchTargets {
   const targets: PatchTargets = new Map()
   for (const provider of records) addPatchTargets(targets, provider.patches)
@@ -423,7 +497,17 @@ function resetPatchStatuses(): void {
   ]))
 }
 
-function snapshotGeneration(retainedGeneration?: number): void {
+function retainPatchStatuses(previous: Map<string, HarmonyPatchStatus>): void {
+  patchStatuses = new Map([...providers.values()].flatMap(provider => provider.patches).map(registered => {
+    const fresh = freshStatus(registered)
+    const retained = previous.get(registered.key)
+    return [registered.key, fresh.state === 'disabled' || retained === undefined
+      ? fresh
+      : { ...retained, generation }]
+  }))
+}
+
+function snapshotGeneration(retainedGeneration?: number, inheritTargetIndex = false): void {
   const retainedState = retainedGeneration === undefined ? undefined : generationStates.get(retainedGeneration)
   generationStates.clear()
   if (retainedState !== undefined) generationStates.set(retainedGeneration!, retainedState)
@@ -451,6 +535,13 @@ function snapshotGeneration(retainedGeneration?: number): void {
       .flatMap(registered => registered.members)
       .flatMap(patch => patchTargetFiles(patch))
       .map(file => `/${file.replaceAll('\\', '/').replace(/^\.\//, '')}`)),
+    ...(inheritTargetIndex && retainedState !== undefined ? {
+      ...(retainedState.targetFiles === undefined ? {} : { targetFiles: new Map(retainedState.targetFiles) }),
+      ...(retainedState.targetIndexComplete === undefined
+        ? {} : { targetIndexComplete: retainedState.targetIndexComplete }),
+      ...(retainedState.typescriptLoaderPackages === undefined
+        ? {} : { typescriptLoaderPackages: new Set(retainedState.typescriptLoaderPackages) }),
+    } : {}),
   })
   resolvedTypeScriptDependencies.clear()
 }
@@ -602,6 +693,7 @@ function prepareProvider(
             throw new Error(`dsh-harmony: member ${JSON.stringify(member.id)} in composite Patch ${JSON.stringify(`${info.name}/${patch.id}`)} cannot declare before or after`)
           }
         }
+        const pipelineFingerprint = patchGraphFingerprint(patch)
         registered.push({
           declarationPatch: patch,
           members,
@@ -609,6 +701,8 @@ function prepareProvider(
           key: `${info.name}/${patch.id}`,
           index: index++,
           declaration: relative(info.dir, filename).replaceAll('\\', '/'),
+          fingerprint: pipelineFingerprint,
+          pipelineFingerprint,
         })
       }
     }
@@ -618,6 +712,16 @@ function prepareProvider(
     throw error
   } finally {
     for (const filename of declaredFiles) loadingPatchFiles.delete(filename)
+  }
+  const dependencyChanged = current !== undefined && current.signature !== signature
+    && current.patches.length === registered.length
+    && current.patches.every((patch, patchIndex) => {
+      const candidate = registered[patchIndex]
+      return candidate !== undefined && patch.key === candidate.key
+        && patch.pipelineFingerprint === candidate.pipelineFingerprint
+    })
+  if (dependencyChanged) {
+    for (const patch of registered) patch.fingerprint = `${signature}\0${patch.pipelineFingerprint}`
   }
   return { info, patches: registered, files, signature }
 }
@@ -889,17 +993,20 @@ export function beginPluginUpdate(
       },
     }
   }
-  const targets: PatchTargets = new Map()
-  mergeTargets(targets, targetsOf(previous.providers.values()))
-  mergeTargets(targets, targetsOf(nextProviders.values()))
+  const nextDisabled = new Set(profile.disabled)
+  const targets = changedPipelineTargets(
+    previous.providers.values(), previous.patchOrder, previous.disabled,
+    nextProviders.values(), nextPatchOrder, nextDisabled,
+  )
+  addChangedProviderDependencyTargets(targets, previous.providers, nextProviders)
   try {
     replaceProviders(nextProviders)
     declaredProviderFiles = nextDeclared
     providerOrder = profile.order
     patchOrder = nextPatchOrder
-    disabledPatchKeys = new Set(profile.disabled)
+    disabledPatchKeys = nextDisabled
     workerThreads = profile.workerThreads
-    preflight(patchOrder, disabledPatchKeys)
+    preflight(patchOrder, disabledPatchKeys, targets)
   } catch (error) {
     for (const restore of [...stagedProviderCaches.values()].reverse()) restore()
     stagedProviderCaches.clear()
@@ -916,8 +1023,9 @@ export function beginPluginUpdate(
   pendingStatusGenerations.add(candidateGeneration)
   transformCache = new Map()
   semanticBindings = new Map(previous.bindings)
-  resetPatchStatuses()
-  snapshotGeneration(previous.generation)
+  if (targets.size === 0) retainPatchStatuses(previous.statuses)
+  else resetPatchStatuses()
+  snapshotGeneration(previous.generation, targets.size === 0)
   let active = true
   return {
     generation: candidateGeneration,
@@ -992,7 +1100,15 @@ export function beginProfileUpdate(input: {
   }
   const disabled = new Set(input.disabled ?? disabledPatchKeys)
   const nextWorkerThreads = input.workerThreads ?? workerThreads
-  preflight(nextPatchOrder, disabled)
+  const providerOrderChanged = previous.order.length !== order.length
+    || previous.order.some((name, index) => name !== order[index])
+  const targets = providerOrderChanged
+    ? allTargets()
+    : changedPipelineTargets(
+        providers.values(), previous.patchOrder, previous.disabled,
+        providers.values(), nextPatchOrder, disabled,
+      )
+  preflight(nextPatchOrder, disabled, targets)
 
   providerOrder = order
   patchOrder = nextPatchOrder
@@ -1003,13 +1119,14 @@ export function beginProfileUpdate(input: {
   pendingStatusGenerations.add(candidateGeneration)
   transformCache = new Map()
   semanticBindings = new Map(previous.bindings)
-  resetPatchStatuses()
-  snapshotGeneration(previous.generation)
+  if (targets.size === 0) retainPatchStatuses(previous.statuses)
+  else resetPatchStatuses()
+  snapshotGeneration(previous.generation, true)
   let active = true
   return {
     generation: candidateGeneration,
     profile: { ...currentProfile(), workerThreads: nextWorkerThreads, order, patchOrder: nextPatchOrder, disabled: [...disabled] },
-    targets: allTargets(),
+    targets,
     async commit() {
       if (!active) return
       pruneSemanticBindings(candidateGeneration)
@@ -1112,7 +1229,7 @@ interface WorkingTransform {
   target: string
   original: string
   output: string
-  sourceFile?: ts.SourceFile
+  sourceAst?: SourceAst
   sourceChange?: SourceDelta
   steps: CompactPatchStep[]
   traceable: BoundSourceTrace<RegisteredPatch>[]
@@ -1149,8 +1266,6 @@ function beginWorkingTransform(filename: string, source: string): WorkingTransfo
 
 interface WorkingTransformSnapshot {
   output: string
-  sourceFile?: ts.SourceFile
-  sourceChange?: SourceDelta
   stepsLength: number
   traceableLength: number
   semantic: WorkingTransform['semantic']
@@ -1159,8 +1274,6 @@ interface WorkingTransformSnapshot {
 function snapshotWorkingTransform(state: WorkingTransform): WorkingTransformSnapshot {
   return {
     output: state.output,
-    sourceFile: state.sourceFile,
-    sourceChange: state.sourceChange,
     stepsLength: state.steps.length,
     traceableLength: state.traceable.length,
     semantic: new Map([...state.semantic].map(([name, value]) => [name, {
@@ -1175,8 +1288,8 @@ function restoreWorkingTransform(
   snapshot: WorkingTransformSnapshot,
 ): void {
   state.output = snapshot.output
-  state.sourceFile = snapshot.sourceFile
-  state.sourceChange = snapshot.sourceChange
+  state.sourceAst = undefined
+  state.sourceChange = undefined
   state.steps.length = snapshot.stepsLength
   state.traceable.length = snapshot.traceableLength
   state.semantic = snapshot.semantic
@@ -1218,7 +1331,7 @@ function applyRegisteredPatch(
           bindingKey,
         )
         state.output = result.source
-        state.sourceFile = undefined
+        state.sourceAst = undefined
         state.sourceChange = undefined
         if (members.length === 1) directDelta = sourceDelta(before, state.output)
         matches += result.matches
@@ -1240,11 +1353,11 @@ function applyRegisteredPatch(
       sourcePatch,
       state.steps,
       () => materializePatchSteps(state.original, state.steps),
-      state.sourceFile,
+      state.sourceAst,
       state.sourceChange,
     )
     state.output = result.source
-    state.sourceFile = result.sourceFile
+    state.sourceAst = result.sourceAst
     state.sourceChange = result.delta
     if (members.length === 1) directDelta = result.delta
     matches += result.matches
@@ -1356,9 +1469,12 @@ function buildTransform(
   return finishWorkingTransform(state, transformGeneration, bind)
 }
 
-function preflight(order: string[], disabled: Set<string>): void {
+function preflight(order: string[], disabled: Set<string>, targets?: PatchTargets): void {
   for (const cached of transformCache.values()) {
-    if (cached.generation === generation) buildTransform(cached.filename, cached.source, order, disabled, false)
+    if (cached.generation !== generation) continue
+    const files = targets?.get(cached.inspection.package)
+    if (targets !== undefined && files?.has(cached.inspection.file) !== true) continue
+    buildTransform(cached.filename, cached.source, order, disabled, false)
   }
 }
 
@@ -1547,7 +1663,7 @@ function transform(filename: string, source: string, requestedGeneration = gener
   let cached = transformCache.get(cacheKey)
   const state = generationStates.get(requestedGeneration)
   if (cached === undefined && requestedGeneration === generation && activeProfileDir !== undefined
-    && state?.hasCompositePatches) {
+    && state?.hasCompositePatches && state.targetIndexComplete !== true) {
     inspectTargets(state.patchOrder, state.disabled, true)
     cached = transformCache.get(cacheKey)
   }
