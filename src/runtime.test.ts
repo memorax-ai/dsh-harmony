@@ -144,9 +144,9 @@ module.exports = ['a', 'b'].map(name => ({
   synchronizeProfile(profile)
   inspectPatchTargets()
   const modules = getLoadPlan()!.modules.filter(item => item.filename.startsWith(realpathSync(target)))
-  expect(modules.find(item => item.filename.endsWith('/a.js'))?.dependencies)
+  expect(modules.find(item => item.filename === realpathSync(join(target, 'lib', 'a.js')))?.dependencies)
     .toContainEqual({ kind: 'require', specifier: 'dependency-a' })
-  expect(modules.find(item => item.filename.endsWith('/b.js'))?.dependencies)
+  expect(modules.find(item => item.filename === realpathSync(join(target, 'lib', 'b.js')))?.dependencies)
     .toContainEqual({ kind: 'require', specifier: 'dependency-b' })
 })
 
