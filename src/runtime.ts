@@ -53,6 +53,13 @@ import {
   type SourceAst,
   type SourceDelta,
 } from './transform.js'
+import {
+  analyzeModuleLoad,
+  observeEntryLoad,
+  type HarmonyEntryLoadPlan,
+  type HarmonyGenerationLoadPlan,
+  type HarmonyModuleLoadPlan,
+} from './orchestrator.js'
 
 const nativeReadFileSync = readFileSync
 
@@ -89,6 +96,7 @@ interface TransformRecord {
   source: string
   output: string
   inspection: CompactPatchInspection
+  module?: HarmonyModuleLoadPlan
 }
 
 export interface ParallelInspectionTask {
@@ -141,7 +149,9 @@ interface GenerationState {
   targetFiles?: Map<string, TargetFileRecord>
   targetIndexComplete?: boolean
   typescriptLoaderPackages?: Set<string>
-  targetFileSuffixes: Set<string>
+  targetFileSuffixes: Map<string, Set<string>>
+  entries: Map<string, HarmonyEntryLoadPlan>
+  moduleDependents: Map<string, Set<string>>
 }
 
 export interface ProfileTransaction {
@@ -186,7 +196,8 @@ let generation = 0
 let generationSequence = 0
 const generationStates = new Map<number, GenerationState>([[0, {
   providers: [], profileDependencies: new Map(), order: [], patchOrder: [], disabled: new Set(), patchesByPackage: new Map(),
-  hasCompositePatches: false, targetFileSuffixes: new Set(),
+  hasCompositePatches: false, targetFileSuffixes: new Map(), entries: new Map(),
+  moduleDependents: new Map(),
 }]])
 let activeProfileDir: string | undefined
 let profileDependencies = new Map<string, string>()
@@ -221,12 +232,15 @@ function selectedProfilePackage(packageName: string, requestedGeneration = gener
   if (directory !== undefined) {
     try { return readPackageInfo(directory) } catch { return undefined }
   }
-  if (activeProfileDir === undefined) return undefined
-  try {
-    const manifest = findPackageJSON(packageName, pathToFileURL(join(activeProfileDir, 'package.json')))
-    return manifest === undefined ? undefined : readPackageInfo(dirname(manifest))
-  } catch {
-    return undefined
+  const anchors = [
+    ...(activeProfileDir === undefined ? [] : [join(activeProfileDir, 'package.json')]),
+    ...Array.from(state?.providers ?? providers.values(), provider => join(provider.info.dir, 'package.json')),
+  ]
+  for (const anchor of anchors) {
+    try {
+      const manifest = findPackageJSON(packageName, pathToFileURL(anchor))
+      if (manifest !== undefined) return readPackageInfo(dirname(manifest))
+    } catch {}
   }
 }
 
@@ -584,11 +598,20 @@ function snapshotGeneration(retainedGeneration?: number, inheritTargetIndex = fa
     patchOrder,
   )
   const patchesByPackage = new Map<string, RegisteredPatch[]>()
+  const targetFileSuffixes = new Map<string, Set<string>>()
   for (const registered of generationPatches) {
     for (const packageName of new Set(registered.members.map(patch => patch.target.package))) {
       const indexed = patchesByPackage.get(packageName) ?? []
       indexed.push(registered)
       patchesByPackage.set(packageName, indexed)
+    }
+    for (const patch of registered.members) {
+      for (const file of patchTargetFiles(patch)) {
+        const suffix = `/${file.replaceAll('\\', '/').replace(/^\.\//, '')}`
+        const packages = targetFileSuffixes.get(suffix) ?? new Set<string>()
+        packages.add(patch.target.package)
+        targetFileSuffixes.set(suffix, packages)
+      }
     }
   }
   generationStates.set(generation, {
@@ -599,10 +622,10 @@ function snapshotGeneration(retainedGeneration?: number, inheritTargetIndex = fa
     disabled: new Set(disabledPatchKeys),
     patchesByPackage,
     hasCompositePatches: generationPatches.some(patch => patch.members.length > 1),
-    targetFileSuffixes: new Set([...providers.values()].flatMap(provider => provider.patches)
-      .flatMap(registered => registered.members)
-      .flatMap(patch => patchTargetFiles(patch))
-      .map(file => `/${file.replaceAll('\\', '/').replace(/^\.\//, '')}`)),
+    entries: new Map(retainedState?.entries),
+    moduleDependents: new Map([...retainedState?.moduleDependents ?? []]
+      .map(([name, dependents]) => [name, new Set(dependents)])),
+    targetFileSuffixes,
     ...(inheritTargetIndex && retainedState !== undefined ? {
       ...(retainedState.targetFiles === undefined ? {} : { targetFiles: new Map(retainedState.targetFiles) }),
       ...(retainedState.targetIndexComplete === undefined
@@ -1499,6 +1522,10 @@ function finishWorkingTransform(
   }
 }
 
+function moduleLoadPlan(record: TransformRecord): HarmonyModuleLoadPlan {
+  return record.module ??= analyzeModuleLoad(record.filename, record.output)
+}
+
 function buildTransform(
   filename: string,
   source: string,
@@ -1606,11 +1633,11 @@ function targetFilename(
   if (target !== undefined) return target
   if (state.targetIndexComplete === true && !discoverTarget) return undefined
   const normalized = absolute.replaceAll('\\', '/')
-  for (const suffix of state.targetFileSuffixes) {
+  for (const [suffix, targetPackages] of state.targetFileSuffixes) {
     if (!normalized.endsWith(suffix)) continue
     const target = canonicalFilename(absolute)
     const pkg = packageFor(target)
-    if (pkg !== undefined && state.patchesByPackage.has(pkg.name)) return target
+    if (pkg !== undefined && targetPackages.has(pkg.name)) return target
   }
   return undefined
 }
@@ -2323,6 +2350,128 @@ export function resolveProfileDependency(
   return generationStates.get(requestedGeneration)?.profileDependencies.get(packageName)
 }
 
+export function recordModuleDependency(
+  parentUrl: string | undefined,
+  childUrl: string,
+  requestedGeneration = generation,
+): void {
+  if (parentUrl?.startsWith('file:') !== true || !childUrl.startsWith('file:')) return
+  const parent = packageFor(fileURLToPath(parentUrl))
+  const child = packageFor(fileURLToPath(childUrl))
+  const state = generationStates.get(requestedGeneration)
+  if (parent === undefined || child === undefined || parent.name === child.name || state === undefined) return
+  const dependents = state.moduleDependents.get(child.name) ?? new Set<string>()
+  dependents.add(parent.name)
+  state.moduleDependents.set(child.name, dependents)
+}
+
+export function dependentPackages(
+  packageNames: Iterable<string>,
+  requestedGeneration = generation,
+): Set<string> {
+  const dependents = generationStates.get(requestedGeneration)?.moduleDependents
+  const result = new Set(packageNames)
+  if (dependents === undefined) return result
+  const queue = [...result]
+  for (let index = 0; index < queue.length; index += 1) {
+    for (const dependent of dependents.get(queue[index]!) ?? []) {
+      if (result.has(dependent)) continue
+      result.add(dependent)
+      queue.push(dependent)
+    }
+  }
+  return result
+}
+
+export function recordEntryLoad(input: {
+  id: string
+  name: string
+  entryInject?: unknown
+  plugin: unknown
+  generation?: number
+}): HarmonyEntryLoadPlan | undefined {
+  const requestedGeneration = input.generation ?? generation
+  const state = generationStates.get(requestedGeneration)
+  if (state === undefined) return undefined
+  const entry = observeEntryLoad({ ...input, generation: requestedGeneration })
+  state.entries.set(input.id, entry)
+  return entry
+}
+
+export function removeEntryLoad(id: string, requestedGeneration = generation): void {
+  generationStates.get(requestedGeneration)?.entries.delete(id)
+}
+
+export function getLoadPlan(requestedGeneration = generation): HarmonyGenerationLoadPlan | undefined {
+  const state = generationStates.get(requestedGeneration)
+  if (state === undefined) return undefined
+  const packageRecords = new Map<string, PackageInfo>()
+  for (const directory of state.profileDependencies.values()) {
+    try {
+      const info = readPackageInfo(directory)
+      packageRecords.set(info.name, info)
+    } catch {}
+  }
+  for (const provider of state.providers) {
+    if (!packageRecords.has(provider.info.name)) packageRecords.set(provider.info.name, provider.info)
+  }
+  for (const target of state.targetFiles?.values() ?? []) {
+    if (!packageRecords.has(target.package.name)) packageRecords.set(target.package.name, target.package)
+  }
+  const packages = [...packageRecords.values()].map(info => ({
+    name: info.name,
+    directory: info.dir,
+    version: info.version,
+  }))
+  const patches = state.providers.flatMap(provider => provider.patches.map(registered => ({
+    key: registered.key,
+    owner: registered.owner,
+    targets: registered.members.flatMap(patch => patchTargetFiles(patch).map(file => ({
+      package: patch.target.package,
+      file,
+    }))),
+  })))
+  const modules = [...transformCache.values()]
+    .filter(record => record.generation === requestedGeneration)
+    .map(moduleLoadPlan)
+  return {
+    generation: requestedGeneration,
+    packages,
+    patches,
+    modules,
+    entries: [...state.entries.values()],
+  }
+}
+
+export function resolveProfilePackageManifest(
+  specifier: string,
+  requestedGeneration = generation,
+): string | undefined {
+  const packageName = packageNameOf(specifier)
+  const info = packageName === undefined ? undefined : selectedProfilePackage(packageName, requestedGeneration)
+  if (info === undefined) return undefined
+  if (specifier === packageName) return join(info.dir, 'package.json')
+  try {
+    const manifest = createRequire(join(info.dir, 'package.json')).resolve(`${specifier}/package.json`)
+    return insideDirectory(info.dir, manifest) ? manifest : undefined
+  } catch {
+    return undefined
+  }
+}
+
+export function plannedClientDependencies(
+  filename: string,
+  requestedGeneration = generation,
+): string[] {
+  try { filename = canonicalFilename(filename) } catch {}
+  const record = transformCache.get(`${requestedGeneration}\0${filename}`)
+  if (record === undefined) return []
+  return [...new Set(moduleLoadPlan(record).dependencies
+    .map(dependency => dependency.specifier)
+    .filter(specifier => !specifier.startsWith('.') && !specifier.startsWith('/')
+      && !specifier.startsWith('node:') && !specifier.includes(':')))]
+}
+
 export function installModuleHooks(): void {
   installNodeModuleHooks({
     aliases: { index: indexUrl, plugin: pluginUrl, settings: settingsUrl, manifest: manifestUrl },
@@ -2331,6 +2480,7 @@ export function installModuleHooks(): void {
     targetFilename: (filename, requestedGeneration) => targetFilename(filename, requestedGeneration, true),
     packageDirectory: filename => packageFor(filename)?.dir,
     resolveProfileDependency,
+    recordDependency: recordModuleDependency,
     resolveTypeScriptDependency,
     activeTypeScriptLoader,
     transpileTypeScript,

@@ -164,6 +164,25 @@ When a plugin must activate another Harmony Provider's bundle, declare it under 
 
 Live reports use the plugins active in Loader. When the profile is stopped, Harmony can only inspect its installation and therefore treats installed profile packages as active.
 
+## Load coordination
+
+Harmony indexes the final transformed module graph as part of each Patch generation. Browser module ordering follows imports and `require()` calls introduced by Patches, while Host reload follows the module edges actually resolved by Node.js and reloads affected dependents in the same transaction.
+
+Plugins that already inject the Harmony service can inspect the current generation without controlling Loader lifecycle themselves:
+
+```ts
+export const inject = ['harmony']
+
+export function apply(ctx) {
+  const plan = ctx.harmony.loadPlan()
+  // packages, Patch targets, transformed modules, and observed Loader entries
+}
+```
+
+`loadPlan()` is diagnostic data for the committed generation. Static `inject` and `provide` findings describe possible module relationships; observed Entry records contain the exact runtime metadata reported by Cordis. Cordis Fiber state remains authoritative for actual activation.
+
+Provider discovery currently follows the composed profile package graph. Consequently, a Provider Entry disabled by Loader configuration, including a truthy `disabled: !!js ...` expression, may still contribute its Harmony Patches. Use Harmony's Provider or Patch switches when Patch activation must follow an explicit runtime setting.
+
 ## React-aware patches
 
 Install `dsh-harmony-react` in a Patch provider when the target is compiled React:

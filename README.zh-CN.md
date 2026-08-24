@@ -168,6 +168,25 @@ Harmony 按一份全局 `patchOrder` 运行所有 Patch。Provider 级 `before` 
 
 实时报告使用 Loader 中实际启用的插件。配置停止运行时，Harmony 只能检查安装情况，因此会把配置中已安装的包视为已启用。
 
+## 加载协调
+
+Harmony 会在每个 Patch generation 中索引最终变换后的模块图。浏览器模块顺序会包含 Patch 新增的 `import` 和 `require()`，Host 重载则跟随 Node.js 实际解析到的模块边，并在同一事务中重载受影响的依赖方。
+
+已经注入 Harmony 服务的插件可以检查当前 generation，而不必自行控制 Loader 生命周期：
+
+```ts
+export const inject = ['harmony']
+
+export function apply(ctx) {
+  const plan = ctx.harmony.loadPlan()
+  // 包、Patch 目标、变换后模块和已观察到的 Loader entry
+}
+```
+
+`loadPlan()` 是已提交 generation 的诊断数据。静态分析得到的 `inject` 与 `provide` 只描述可能的模块关系；已观察到的 Entry 记录包含 Cordis 报告的准确运行时元数据，实际激活状态仍以 Cordis Fiber 为准。
+
+Provider 发现目前跟随组合后的 profile 包图。因此，被 Loader 配置禁用的 Provider Entry——包括 `disabled: !!js ...` 表达式结果为真的情况——仍可能贡献 Harmony Patch。需要让 Patch 激活服从明确运行时设置时，请使用 Harmony 自身的 Provider 或 Patch 开关。
+
 ## React-aware Patch
 
 修改编译后的 React 目标时，在 Patch Provider 中安装 `dsh-harmony-react`：

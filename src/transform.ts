@@ -499,7 +499,9 @@ class AstIndex {
   resolve(locators: ReadonlyArray<MatchLocator>): ts.Node[] {
     const indexed = new Map<string, ts.Node[]>()
     for (const kind of new Set(locators.map(locator => locator.kind))) {
-      for (const node of this.nodes(kind)) {
+      const nodes = this.nodes(kind)
+      if (nodes === undefined) return resolveLocators(this.sourceFile, locators)
+      for (const node of nodes) {
         const key = `${kind}\0${node.pos}\0${node.end}`
         const nodes = indexed.get(key) ?? []
         nodes.push(node)
@@ -511,9 +513,9 @@ class AstIndex {
     ))
   }
 
-  private nodes(kind: ts.SyntaxKind): ts.Node[] {
+  private nodes(kind: ts.SyntaxKind): ts.Node[] | undefined {
     let bucket = this.byKind.get(kind)
-    if (bucket === undefined) return []
+    if (bucket === undefined) return undefined
     if (this.cleanedGeneration.get(kind) !== this.generation) {
       bucket = bucket.filter(node => nodeRoot(node) === this.sourceFile)
       this.byKind.set(kind, bucket)
@@ -530,7 +532,7 @@ class AstIndex {
     bucket.push(node)
     this.byKind.set(node.kind, bucket)
     if (this.updating) this.dirtyKinds.add(node.kind)
-    for (const child of node.getChildren()) this.addNewNodes(child)
+    ts.forEachChild(node, child => this.addNewNodes(child))
   }
 
   private queryBranch(branch: QueryBranch, root: ts.Node): ts.Node[] {
@@ -566,7 +568,9 @@ class AstIndex {
 
   private segmentCandidates(segment: QuerySegment, root: ts.Node): ts.Node[] | undefined {
     if (segment.kinds === undefined) return undefined
-    const candidates = segment.kinds.flatMap(kind => this.nodes(kind))
+    const buckets = segment.kinds.map(kind => this.nodes(kind))
+    if (buckets.some(bucket => bucket === undefined)) return undefined
+    const candidates = buckets.flatMap(bucket => bucket!)
     const nodes = segment.kinds.length === 1 ? candidates : [...new Set(candidates)]
     return nodes.filter(node => nodeWithin(node, root)
       && segment.attributes.every(attribute => {

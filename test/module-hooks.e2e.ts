@@ -9,6 +9,7 @@ import Loader from '@deepseek-ai/cordis-plugin-loader'
 import { apply as harmonyApply } from '../lib/index.js'
 import {
   beginProfileUpdate,
+  dependentPackages,
   getPatchStatuses,
   installFileTransforms,
   installModuleHooks,
@@ -20,6 +21,7 @@ const profile = mkdtempSync(join(tmpdir(), 'dsh-harmony-module-hooks-'))
 const external = mkdtempSync(join(tmpdir(), 'dsh-harmony-module-hooks-external-'))
 const target = join(profile, 'node_modules/module-hook-target')
 const provider = join(profile, 'node_modules/module-hook-provider')
+const consumer = join(profile, 'node_modules/module-hook-consumer')
 const unrelated = join(profile, 'node_modules/unrelated-typescript-target')
 const transitiveFallback = join(profile, 'node_modules/module-hook-transitive')
 const transitive = join(profile, 'bundle/node_modules/module-hook-transitive')
@@ -46,6 +48,7 @@ const files = {
 try {
   mkdirSync(join(target, 'lib'), { recursive: true })
   mkdirSync(provider)
+  mkdirSync(consumer)
   mkdirSync(unrelated)
   mkdirSync(transitiveFallback)
   mkdirSync(transitive, { recursive: true })
@@ -56,11 +59,19 @@ try {
   writeFileSync(join(profile, 'package.json'), JSON.stringify({ dependencies: {
     'module-hook-provider': '1',
     'module-hook-target': '1',
+    'module-hook-consumer': '1',
     'unrelated-typescript-target': '1',
   } }))
   writeFileSync(join(target, 'package.json'), JSON.stringify({
     name: 'module-hook-target', version: '1.0.0', type: 'module',
   }))
+  writeFileSync(join(consumer, 'package.json'), JSON.stringify({
+    name: 'module-hook-consumer', version: '1.0.0', type: 'module', main: './index.js',
+  }))
+  writeFileSync(join(consumer, 'index.js'), `
+import { value } from 'module-hook-target/lib/array.js'
+export { value }
+`)
   for (const filename of [files.array, files.typed, files.alias, files.idempotent]) {
     writeFileSync(filename, 'export const value = 1\n')
   }
@@ -232,6 +243,9 @@ module.exports = [
   const typescript = await import(`${urls.typescriptEntry}?dsh-harmony=${generation}`)
 
   assert.equal(array.value, 2)
+  const consumerModule = await import(pathToFileURL(join(consumer, 'index.js')).href)
+  assert.equal(consumerModule.value, 2)
+  assert.ok(dependentPackages(['module-hook-target']).has('module-hook-consumer'))
   assert.equal(typed.value, 2)
   assert.equal(typescript.value, 3)
   assert.equal((globalThis as any).__dshHarmonyAliasApplications, 1)
@@ -240,6 +254,11 @@ module.exports = [
   assert.equal(loaderStatus?.state, 'bound')
   assert.deepEqual(loaderStatus?.warnings, ['target module-hook-target@1.0.0 does not satisfy ^2.0.0'])
   assert.equal(getPatchStatuses().find(patch => patch.key === 'module-hook-provider/typescript-source')?.state, 'bound')
+
+  const dependencyCandidate = beginProfileUpdate({ disabled: ['module-hook-provider/array-source'] })
+  const reloadedConsumer = await import(`${pathToFileURL(join(consumer, 'index.js')).href}?dsh-harmony=${dependencyCandidate.generation}`)
+  assert.equal(reloadedConsumer.value, 1)
+  dependencyCandidate.rollback()
 
   const candidate = beginProfileUpdate({ disabled: ['module-hook-provider/typescript-loader'] })
   await assert.rejects(

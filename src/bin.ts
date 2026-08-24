@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 
 import { existsSync } from 'node:fs'
+import { enableCompileCache } from 'node:module'
 import { join } from 'node:path'
 import { terminalLocale, terminalText } from './locale.js'
 import type { HarmonyInspection, HarmonyProfileUpdateResult } from './index.js'
 import type { HarmonyPatchOrderItem } from './order.js'
+
+enableCompileCache()
 
 const locale = terminalLocale()
 const text = (english: string, chinese: string): string => terminalText(locale, english, chinese)

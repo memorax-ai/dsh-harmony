@@ -1,6 +1,6 @@
 {
   "name": "dsh-harmony",
-  "version": "0.8.5",
+  "version": "0.8.6",
   "description": "A library for patching, replacing and decorating DeepSeek Harness plugins during runtime",
   "keywords": [
     "deepseek",
@@ -59,6 +59,8 @@
     },
     "harmony": {
       "patches": [
+        "./lib/builtins/client-load-plan.patch.cjs",
+        "./lib/builtins/cordis-service-index.patch.cjs",
         "./lib/builtins/settings.patch.cjs",
         "./lib/builtins/session-profile.patch.cjs"
       ]
@@ -90,10 +92,11 @@
     "build:browser": "tsc -p tsconfig.browser.json",
     "build:scripts": "tsc -p tsconfig.scripts.json",
     "benchmark:fleet": "npm run build:core && npm run build:scripts && node scripts/benchmark-fleet.mjs",
+    "benchmark:dsh-load": "npm run build:core && npm run build:scripts && node scripts/benchmark-dsh-load.mjs",
     "test": "npm run build && npm run build --workspaces --if-present && tsc -p tsconfig.test.json && npm run test:unit && npm run test:integration && npm run test:e2e",
-    "test:unit": "vitest run src/compatibility.test.ts src/http.test.ts src/locale.test.ts src/order.test.ts src/scheduler.test.ts src/session-profile.test.ts src/settings.test.ts src/transform.test.ts packages/react/src/patches.test.ts packages/react/src/studio.test.ts",
+    "test:unit": "vitest run src/compatibility.test.ts src/http.test.ts src/locale.test.ts src/orchestrator.test.ts src/order.test.ts src/scheduler.test.ts src/session-profile.test.ts src/settings.test.ts src/transform.test.ts packages/react/src/patches.test.ts packages/react/src/studio.test.ts",
     "test:integration": "vitest run src/profile.test.ts src/runtime.test.ts src/tui.test.ts",
-    "test:e2e": "node test/hook.e2e.ts && node test/module-hooks.e2e.ts && node test/client.e2e.ts && node test/first-boot.e2e.ts && node test/embedded.e2e.ts && node test/shim.e2e.ts && node test/bootstrap.e2e.ts && node test/runtime-gate.e2e.ts",
+    "test:e2e": "node test/hook.e2e.ts && node test/module-hooks.e2e.ts && node test/load-plan.e2e.ts && node test/client.e2e.ts && node test/first-boot.e2e.ts && node test/embedded.e2e.ts && node test/shim.e2e.ts && node test/bootstrap.e2e.ts && node test/runtime-gate.e2e.ts",
     "test:package": "node test/package.e2e.ts",
     "check": "npm test",
     "prepare": "npm run build",
@@ -118,11 +121,12 @@
     "yaml": "^2.9.0"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh": "0.1.0-rc.8",
-    "@deepseek-ai/dsh-app-boot": "0.1.0-rc.8",
+    "@deepseek-ai/dsh": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-app-boot": "0.1.1-rc.2",
     "@types/node": "^24.10.0",
     "@types/semver": "^7.8.0",
     "react": "18.2.0",
+    "react-dom": "18.2.0",
     "react-test-renderer": "18.2.0",
     "vitest": "^4.1.11"
   },

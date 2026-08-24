@@ -3,6 +3,7 @@ node_modules/
 /lib/
 /browser-dist/
 /scripts/
+/formal/.lake/
 coverage/
 *.tgz
 PRODUCT.md

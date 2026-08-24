@@ -2,6 +2,7 @@ import type MagicString from 'magic-string'
 import type ts from 'typescript'
 import type { HarmonyReloadStatus } from './installer.js'
 import type { HarmonyProfileUpdate, HarmonyProfileView } from './profile.js'
+import type { HarmonyGenerationLoadPlan } from './orchestrator.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -11,6 +12,7 @@ declare module '@deepseek-ai/cordis' {
 
 export interface HarmonyService {
   profile(): HarmonyProfileView
+  loadPlan(): HarmonyGenerationLoadPlan | undefined
   updateProfile(input: HarmonyProfileUpdate): Promise<HarmonyRuntimeProfileUpdateResult>
   inspect(input?: HarmonyInspectInput): HarmonyInspection
 }
@@ -37,6 +39,7 @@ export interface HarmonyInspectInput {
 export interface HarmonyInspection {
   patches: HarmonyPatchStatus[]
   targets: HarmonyPatchInspection[]
+  loadPlan?: HarmonyGenerationLoadPlan
 }
 
 export interface HarmonyPatchTarget {
@@ -165,6 +168,14 @@ export interface HarmonyPatchInspection {
 }
 
 export { apply, inject } from './plugin.js'
+export type {
+  HarmonyEntryLoadPlan,
+  HarmonyGenerationLoadPlan,
+  HarmonyModuleDependency,
+  HarmonyModuleLoadPlan,
+  HarmonyPackageLoadPlan,
+  HarmonyPatchLoadPlan,
+} from './orchestrator.js'
 export {
   preflightHarmonyProfileUpdate,
   readHarmonyProfile,

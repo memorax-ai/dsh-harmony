@@ -29,13 +29,17 @@ import {
   consumeStartupPerformance,
   currentSessionPatchProfile,
   currentProfile,
+  dependentPackages,
   getPatchInspections,
+  getLoadPlan,
   getPatchOrderViolations,
   getPatchStatuses,
   inspectPatchTargetsAsync,
   inspectUnresolvedPatchTargetsAsync,
   packageNameOf,
   prepareModuleReload,
+  recordEntryLoad,
+  removeEntryLoad,
   resolveProfileDependency,
   subscribe,
   subscribePatchStatuses,
@@ -53,11 +57,13 @@ const imageAssets = [
 
 interface ReloadFiber {
   uid: number | null
+  inject?: unknown
   runtime: { callback: unknown } | null
 }
 
 interface ReloadableEntry {
-  options: { name: string }
+  id?: string
+  options: { name: string; inject?: unknown }
   fiber?: ReloadFiber
   parent: { tree: { ctx?: { baseUrl?: string }; import(name: string, getOuterStack?: () => string[]): unknown } }
   loader: { unwrapExports(value: unknown): unknown }
@@ -111,6 +117,19 @@ function loaderInventory(ctx: Context): { packages: string[]; active: HarmonyAct
     }
     packages.add(candidate)
     if (entry.options.group || entry.disabled) continue
+    const running = entry as typeof entry & {
+      id: string
+      options: { name: string; inject?: unknown }
+      fiber?: { runtime?: { callback?: unknown } }
+    }
+    if (running.fiber?.runtime?.callback !== undefined) {
+      recordEntryLoad({
+        id: running.id,
+        name: running.options.name,
+        entryInject: running.fiber.inject ?? running.options.inject,
+        plugin: running.fiber.runtime.callback,
+      })
+    }
     const entryIds = active.get(name) ?? []
     entryIds.push(entry.id)
     active.set(name, entryIds)
@@ -119,6 +138,10 @@ function loaderInventory(ctx: Context): { packages: string[]; active: HarmonyAct
     packages: [...packages],
     active: [...active].map(([name, entryIds]) => ({ name, entryIds })),
   }
+}
+
+function loaderInventoryFingerprint(inventory: ReturnType<typeof loaderInventory>): string {
+  return JSON.stringify([inventory.packages, inventory.active])
 }
 
 interface ReloadAction {
@@ -156,7 +179,11 @@ function sendAsset(request: IncomingMessage, response: ServerResponse, image: Bu
   response.end(request.method === 'HEAD' ? undefined : image)
 }
 
-export async function reloadEntries(entries: ReloadableEntry[], generation: number): Promise<() => Promise<void>> {
+export async function reloadEntries(
+  entries: ReloadableEntry[],
+  generation: number,
+  invalidatedPackages: Iterable<string> = [],
+): Promise<() => Promise<void>> {
   const plans: Array<{ entry: ReloadableEntry; previous: ReloadFiber; previousPlugin: unknown; next: unknown }> = []
   const commonjsPackages = new Map<string, () => void>()
   const commonjsRestores = new Set<() => void>()
@@ -172,6 +199,10 @@ export async function reloadEntries(entries: ReloadableEntry[], generation: numb
     if (errors.length > 0) throw new AggregateError(errors, 'dsh-harmony: CommonJS cache rollback failed')
   }
   try {
+    for (const packageName of invalidatedPackages) {
+      const prepared = prepareModuleReload(packageName, undefined, commonjsPackages)
+      if (prepared !== undefined) commonjsRestores.add(prepared.restore)
+    }
     for (const entry of entries) {
       const previous = entry.fiber
       if (previous?.uid == null || previous.runtime === null) continue
@@ -218,6 +249,13 @@ export async function reloadEntries(entries: ReloadableEntry[], generation: numb
       touched.push(plan)
       await plan.entry._dispose(plan.previous)
       await plan.entry._start(plan.next)
+      recordEntryLoad({
+        id: plan.entry.id ?? plan.entry.options.name,
+        name: plan.entry.options.name,
+        entryInject: plan.entry.fiber?.inject ?? plan.entry.options.inject,
+        plugin: plan.next,
+        generation,
+      })
     }
   } catch (error) {
     try {
@@ -259,6 +297,8 @@ export async function apply(ctx: Context): Promise<void> {
   let syncQueued = false
   let stopped = false
   let syncImmediate: NodeJS.Immediate | undefined
+  let inventoryTimeout: NodeJS.Timeout | undefined
+  let observedLoaderInventory = ''
   let reloadImmediate: NodeJS.Immediate | undefined
   let updateTail = Promise.resolve()
   const reloadingEntries = new Set<object>()
@@ -385,22 +425,28 @@ export async function apply(ctx: Context): Promise<void> {
     return result
   }
 
-  const hostEntries = (targets: PatchTargets, action?: ReloadAction): ReloadableEntry[] => [...ctx.loader.entries()].filter((entry) => {
+  const hostPackages = (targets: PatchTargets, action?: ReloadAction): Set<string> => dependentPackages([
+    ...(action?.host ?? []),
+    ...[...targets].filter(([, files]) => [...files].some(file => file !== 'lib/client.js')).map(([name]) => name),
+  ])
+  const hostEntries = (packages: ReadonlySet<string>): ReloadableEntry[] => [...ctx.loader.entries()].filter((entry) => {
     if (entry === selfEntry) return false
     const packageName = packageNameOf(entry.options.name)
-    return packageName !== undefined && (action?.host.has(packageName) === true
-      || targets.has(packageName) && [...targets.get(packageName)!].some(file => file !== 'lib/client.js'))
+    return packageName !== undefined && packages.has(packageName)
   }) as unknown as ReloadableEntry[]
-  const assertNoSelfHostReload = (targets: PatchTargets, action?: ReloadAction): void => {
-    const files = targets.get(selfPackage)
-    if (action?.host.has(selfPackage) === true || files !== undefined && [...files].some(file => file !== 'lib/client.js')) {
+  const assertNoSelfHostReload = (packages: ReadonlySet<string>): void => {
+    if (packages.has(selfPackage)) {
       throw new Error(`dsh-harmony: reloading ${JSON.stringify(selfPackage)} inside its own runtime is unsafe; restart DSH to apply this change`)
     }
   }
-  const reload = async (entries: ReloadableEntry[], nextGeneration: number): Promise<() => Promise<void>> => {
+  const reload = async (
+    entries: ReloadableEntry[],
+    nextGeneration: number,
+    invalidatedPackages: Iterable<string> = [],
+  ): Promise<() => Promise<void>> => {
     for (const entry of entries) reloadingEntries.add(entry)
     try {
-      const restore = await reloadEntries(entries, nextGeneration)
+      const restore = await reloadEntries(entries, nextGeneration, invalidatedPackages)
       return async () => {
         for (const entry of entries) reloadingEntries.add(entry)
         try {
@@ -429,7 +475,8 @@ export async function apply(ctx: Context): Promise<void> {
         warnPatchStatuses()
         return
       }
-      assertNoSelfHostReload(transaction.targets, action)
+      const packages = hostPackages(transaction.targets, action)
+      assertNoSelfHostReload(packages)
       const transformStarted = probe === undefined ? undefined : process.hrtime.bigint()
       try {
         await inspectPatchTargetsAsync()
@@ -438,7 +485,7 @@ export async function apply(ctx: Context): Promise<void> {
       }
       const hostReloadStarted = probe === undefined ? undefined : process.hrtime.bigint()
       try {
-        restoreEntries = await reload(hostEntries(transaction.targets, action), transaction.generation)
+        restoreEntries = await reload(hostEntries(packages), transaction.generation, packages)
       } finally {
         if (probe !== undefined && hostReloadStarted !== undefined) probe.hostReloadMs = elapsedMilliseconds(hostReloadStarted)
       }
@@ -450,8 +497,8 @@ export async function apply(ctx: Context): Promise<void> {
         }
         for (const packageName of clientPackages) {
           if (modules === undefined) continue
-          modules.rebuilt(packageName)
           rebuiltClients.push(packageName)
+          modules.rebuilt(packageName)
         }
       } finally {
         if (probe !== undefined && clientRebuildStarted !== undefined) {
@@ -508,12 +555,16 @@ export async function apply(ctx: Context): Promise<void> {
     return transaction
   }
 
-  const refreshPatches = (force = true, reload?: string): Promise<void> => enqueueUpdate(async () => {
+  const refreshPatches = (
+    force = true,
+    reload?: string,
+    preparedInventory?: ReturnType<typeof loaderInventory>,
+  ): Promise<void> => enqueueUpdate(async () => {
     const action = reload === undefined ? undefined : {
       host: new Set([reload]),
       client: new Set([reload]),
     }
-    const inventory = loaderInventory(ctx)
+    const inventory = preparedInventory ?? loaderInventory(ctx)
     await runTransaction(reload === undefined ? 'plugin-update' : 'manual-reload', () => (
       beginPluginUpdate(force, inventory.active, inventory.packages)
     ), action)
@@ -526,7 +577,9 @@ export async function apply(ctx: Context): Promise<void> {
     let transaction: ProfileTransaction | undefined
     let failure: unknown
     try {
-      transaction = beginStartupUpdate(loaderInventory(ctx).active)
+      const inventory = loaderInventory(ctx)
+      observedLoaderInventory = loaderInventoryFingerprint(inventory)
+      transaction = beginStartupUpdate(inventory.active)
       if (probe !== undefined && prepareStarted !== undefined) probe.prepareMs += elapsedMilliseconds(prepareStarted)
       const transformStarted = probe === undefined ? undefined : process.hrtime.bigint()
       const inspections = await inspectUnresolvedPatchTargetsAsync()
@@ -614,6 +667,7 @@ export async function apply(ctx: Context): Promise<void> {
     inspect: (input: { package?: string; file?: string } = {}) => ({
       patches: getPatchStatuses(),
       targets: getPatchInspections(input.package, input.file),
+      loadPlan: getLoadPlan(),
     }),
     reload: async (provider?: string) => {
       if (provider === selfPackage) {
@@ -632,8 +686,10 @@ export async function apply(ctx: Context): Promise<void> {
   ctx.effect(() => async () => {
     stopped = true
     if (syncImmediate !== undefined) clearImmediate(syncImmediate)
+    if (inventoryTimeout !== undefined) clearTimeout(inventoryTimeout)
     if (reloadImmediate !== undefined) clearImmediate(reloadImmediate)
     syncImmediate = undefined
+    inventoryTimeout = undefined
     reloadImmediate = undefined
     syncQueued = false
     queued = false
@@ -650,6 +706,7 @@ export async function apply(ctx: Context): Promise<void> {
 
   ctx.provide('harmony', {
     profile: () => profileView(profileRevision),
+    loadPlan: getLoadPlan,
     updateProfile: operations.updateProfile,
     inspect: operations.inspect,
   })
@@ -775,6 +832,7 @@ export async function apply(ctx: Context): Promise<void> {
         })
         return sendJson(response, {
           inspections: inspection.targets,
+          loadPlan: inspection.loadPlan,
         })
       },
     }), webCtx.webServer.register({
@@ -829,14 +887,45 @@ export async function apply(ctx: Context): Promise<void> {
       syncImmediate = undefined
       syncQueued = false
       if (stopped) return
+      if (readProfileText() === profileText) return
       void refreshPatches(false).catch(error => ctx.logger.error(error))
     })
   }
+  const synchronizeLoaderInventory = (): void => {
+    if (stopped) return
+    if (inventoryTimeout !== undefined) clearTimeout(inventoryTimeout)
+    inventoryTimeout = setTimeout(() => {
+      inventoryTimeout = undefined
+      if (stopped) return
+      const inventory = loaderInventory(ctx)
+      const fingerprint = loaderInventoryFingerprint(inventory)
+      if (fingerprint === observedLoaderInventory) return
+      const previous = observedLoaderInventory
+      observedLoaderInventory = fingerprint
+      void refreshPatches(false, undefined, inventory).catch(error => {
+        observedLoaderInventory = previous
+        ctx.logger.error(error)
+      })
+    }, 10)
+  }
   ctx.effect(() => watchProfile(synchronizeLoader, (error) => ctx.logger.error(error)), 'dsh-harmony: profile order watch')
   ctx.effect(() => subscribePatchStatuses(warnPatchStatuses), 'dsh-harmony: Patch status warnings')
-  ctx.on('loader/config-update', synchronizeLoader)
+  ctx.on('loader/config-update', synchronizeLoaderInventory)
   ctx.on('internal/plugin', (fiber: Fiber) => {
-    if (fiber.entry === undefined || !reloadingEntries.has(fiber.entry)) synchronizeLoader()
+    const entry = fiber.entry as undefined | {
+      id: string
+      options: { name: string; inject?: unknown }
+    }
+    if (entry !== undefined && fiber.parent.fiber?.entry !== entry) {
+      if (fiber.uid === null) removeEntryLoad(entry.id)
+      else recordEntryLoad({
+        id: entry.id,
+        name: entry.options.name,
+        entryInject: (fiber as Fiber & { inject?: unknown }).inject ?? entry.options.inject,
+        plugin: (fiber as Fiber & { runtime?: { callback?: unknown } }).runtime?.callback,
+      })
+    }
+    if (fiber.entry === undefined || !reloadingEntries.has(fiber.entry)) synchronizeLoaderInventory()
   })
 
   ctx.effect(() => subscribe((targets, generation) => {

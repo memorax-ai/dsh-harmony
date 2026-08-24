@@ -65,6 +65,7 @@ export interface ModuleTransformHooks<Loader> {
   targetFilename(filename: string, generation: number): string | undefined
   packageDirectory(filename: string): string | undefined
   resolveProfileDependency(specifier: string, parentUrl: string | undefined, generation: number): string | undefined
+  recordDependency(parentUrl: string | undefined, childUrl: string, generation: number): void
   resolveTypeScriptDependency(specifier: string, parentUrl: string | undefined, generation: number): string | undefined
   activeTypeScriptLoader(filename: string, generation: number): Loader | undefined
   transpileTypeScript(filename: string, source: string, loader: Loader): { format: 'module' | 'commonjs'; source: string }
@@ -84,6 +85,7 @@ export function installNodeModuleHooks<Loader>(runtime: ModuleTransformHooks<Loa
   }
   registerHooks({
     resolve(specifier, context, nextResolve) {
+      const parentUrl = context.parentURL
       const marker = '?dsh-harmony='
       const index = specifier.lastIndexOf(marker)
       const cleanSpecifier = index === -1 ? specifier : specifier.slice(0, index)
@@ -146,11 +148,13 @@ export function installNodeModuleHooks<Loader>(runtime: ModuleTransformHooks<Loa
           nextGeneration ??= inherited
         }
       }
-      if (nextGeneration === undefined && context.parentURL?.startsWith('file:') && result.url.startsWith('file:')) {
+      runtime.recordDependency(parentUrl, result.url, requestedGeneration)
+      if (nextGeneration === undefined && parentUrl?.startsWith('file:') && result.url.startsWith('file:')) {
         if (inherited !== undefined) {
-          const parentDirectory = runtime.packageDirectory(fileURLToPath(context.parentURL))
+          const parentDirectory = runtime.packageDirectory(fileURLToPath(parentUrl))
           const childDirectory = runtime.packageDirectory(fileURLToPath(result.url))
-          if (parentDirectory === childDirectory) nextGeneration = inherited
+          const transformedDependency = runtime.targetFilename(fileURLToPath(result.url), requestedGeneration) !== undefined
+          if (parentDirectory === childDirectory || transformedDependency) nextGeneration = inherited
         }
       }
       if (nextGeneration === undefined) return result

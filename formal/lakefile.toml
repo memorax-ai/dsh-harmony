@@ -1,0 +1,6 @@
+name = "harmony_formal"
+version = "0.1.0"
+defaultTargets = ["Harmony"]
+
+[[lean_lib]]
+name = "Harmony"

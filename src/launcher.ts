@@ -8,7 +8,9 @@ import {
   inspectPatchTargetsAsync,
   installFileTransforms,
   installModuleHooks,
+  plannedClientDependencies,
   recordStartupPerformance,
+  resolveProfilePackageManifest,
 } from './runtime.js'
 
 const loadPerformanceChannel = channel('dsh-harmony:load')
@@ -57,6 +59,10 @@ export async function launchDsh(args: string[], profile: string | undefined, pro
 
   installModuleHooks()
   installFileTransforms()
+  Object.assign(globalThis, {
+    __dshHarmonyResolvePackageManifest: resolveProfilePackageManifest,
+    __dshHarmonyClientDependencies: plannedClientDependencies,
+  })
 
   if (!isPluginCommand && profileDir !== undefined && !existsSync(join(profileDir, 'package.json'))
     && profile !== undefined && PROFILE_TEMPLATES[profile] !== undefined) {

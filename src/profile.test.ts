@@ -170,11 +170,19 @@ test('declares the built-in Settings Patch when its target plugin is present', (
 
   writeProfile({ 'dsh-harmony': '1' }, ['custom-web-bundle'])
   expect(synchronizeHarmonyProfile(profile).plugins[0].patches)
-    .toEqual(['./lib/builtins/settings.patch.cjs', './lib/builtins/session-profile.patch.cjs'])
+    .toEqual([
+      './lib/builtins/client-load-plan.patch.cjs',
+      './lib/builtins/cordis-service-index.patch.cjs',
+      './lib/builtins/settings.patch.cjs',
+      './lib/builtins/session-profile.patch.cjs',
+    ])
 
   rmSync(settingsDir, { recursive: true })
   writeFileSync(join(bundle, 'package.json'), JSON.stringify({ name: 'custom-web-bundle' }))
-  expect(synchronizeHarmonyProfile(profile, ['dsh-harmony']).plugins[0].patches).toEqual([])
+  expect(synchronizeHarmonyProfile(profile, ['dsh-harmony']).plugins[0].patches).toEqual([
+    './lib/builtins/client-load-plan.patch.cjs',
+    './lib/builtins/cordis-service-index.patch.cjs',
+  ])
   rmSync(profile, { recursive: true })
 })
 

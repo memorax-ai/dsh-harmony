@@ -16,13 +16,17 @@ import {
   beginPluginUpdate,
   beginStartupUpdate,
   currentProfile,
+  dependentPackages,
   discoverPackage,
   discoverProfile,
   getPatchInspections,
+  getLoadPlan,
   getPatchStatuses,
   inspectPatchTargets,
   inspectPatchTargetsAsync,
   installFileTransforms,
+  plannedClientDependencies,
+  recordModuleDependency,
   retainedGenerationCount,
   resolveProfileDependency,
   synchronizePluginOrder,
@@ -79,6 +83,101 @@ module.exports = {
 
   expect(readFileSync(join(target, 'lib/index.js'), 'utf8')).toContain('return 2')
   expect(await readFile(join(target, 'lib/index.js'), 'utf8')).toContain('return 2')
+})
+
+test('indexes an inject declaration added by a Patch', () => {
+  const target = join(root, 'patched-inject-target')
+  const provider = join(root, 'patched-inject-provider')
+  mkdirSync(join(target, 'lib'), { recursive: true })
+  mkdirSync(provider)
+  writeFileSync(join(target, 'package.json'), JSON.stringify({ name: 'patched-inject-target', version: '1.0.0' }))
+  writeFileSync(join(target, 'lib/index.js'), 'exports.apply = function apply() {}\n')
+  writeFileSync(join(provider, 'package.json'), JSON.stringify({
+    name: 'patched-inject-provider',
+    dsh: { harmony: { patches: ['./patch.cjs'] } },
+  }))
+  writeFileSync(join(provider, 'patch.cjs'), `
+module.exports = {
+  id: 'inject-service', target: { package: 'patched-inject-target', file: 'lib/index.js' },
+  select: 'SourceFile', expect: 1,
+  apply({ edit }) { edit.append("exports.inject = ['patched-service']; require('patched-client-dependency')\\n") },
+}
+`)
+
+  discoverPackage(provider)
+  readFileSync(join(target, 'lib/index.js'), 'utf8')
+
+  const module = getLoadPlan()?.modules.find(item => item.filename === realpathSync(join(target, 'lib/index.js')))
+  expect(module?.declaredInject).toEqual(['patched-service'])
+  expect(plannedClientDependencies(join(target, 'lib/index.js'))).toContain('patched-client-dependency')
+})
+
+test('indexes each effective Patch output by its final source fingerprint', () => {
+  const profile = join(root, 'effective-module-analysis-profile')
+  const provider = join(profile, 'node_modules', 'effective-module-analysis-provider')
+  const target = join(profile, 'node_modules', 'effective-module-analysis-target')
+  mkdirSync(provider, { recursive: true })
+  mkdirSync(join(target, 'lib'), { recursive: true })
+  writeFileSync(join(profile, 'package.json'), JSON.stringify({
+    dependencies: {
+      'effective-module-analysis-provider': '1',
+      'effective-module-analysis-target': '1',
+    },
+  }))
+  writeFileSync(join(provider, 'package.json'), JSON.stringify({
+    name: 'effective-module-analysis-provider',
+    dsh: { harmony: { patches: ['./patch.cjs'] } },
+  }))
+  writeFileSync(join(provider, 'patch.cjs'), `
+module.exports = ['a', 'b'].map(name => ({
+  id: name,
+  target: { package: 'effective-module-analysis-target', file: 'lib/' + name + '.js' },
+  select: 'SourceFile', expect: 1,
+  apply({ edit }) { edit.append("require('dependency-" + name + "')\\n") },
+}))
+`)
+  writeFileSync(join(target, 'package.json'), JSON.stringify({
+    name: 'effective-module-analysis-target', version: '1.0.0',
+  }))
+  for (const name of ['a', 'b']) writeFileSync(join(target, 'lib', `${name}.js`), 'exports.apply = () => {}\n')
+
+  synchronizeProfile(profile)
+  inspectPatchTargets()
+  const modules = getLoadPlan()!.modules.filter(item => item.filename.startsWith(realpathSync(target)))
+  expect(modules.find(item => item.filename.endsWith('/a.js'))?.dependencies)
+    .toContainEqual({ kind: 'require', specifier: 'dependency-a' })
+  expect(modules.find(item => item.filename.endsWith('/b.js'))?.dependencies)
+    .toContainEqual({ kind: 'require', specifier: 'dependency-b' })
+})
+
+test('links actually resolved package dependencies transitively', () => {
+  const profile = join(root, 'module-dependency-profile')
+  const library = join(profile, 'node_modules', 'module-dependency-library')
+  const consumer = join(profile, 'node_modules', 'module-dependency-consumer')
+  const application = join(profile, 'node_modules', 'module-dependency-application')
+  for (const directory of [library, consumer, application]) mkdirSync(directory, { recursive: true })
+  writeFileSync(join(profile, 'package.json'), JSON.stringify({ dependencies: {
+    'module-dependency-library': '1',
+    'module-dependency-consumer': '1',
+    'module-dependency-application': '1',
+  } }))
+  for (const [name, directory] of [
+    ['module-dependency-library', library],
+    ['module-dependency-consumer', consumer],
+    ['module-dependency-application', application],
+  ] as const) {
+    writeFileSync(join(directory, 'package.json'), JSON.stringify({ name, version: '1.0.0' }))
+    writeFileSync(join(directory, 'index.js'), 'module.exports = {}\n')
+  }
+
+  synchronizeProfile(profile)
+  recordModuleDependency(pathToFileURL(join(consumer, 'index.js')).href, pathToFileURL(join(library, 'index.js')).href)
+  recordModuleDependency(pathToFileURL(join(application, 'index.js')).href, pathToFileURL(join(consumer, 'index.js')).href)
+  expect(dependentPackages(['module-dependency-library'])).toEqual(new Set([
+    'module-dependency-library',
+    'module-dependency-consumer',
+    'module-dependency-application',
+  ]))
 })
 
 test('loads a legacy Patch that declares ordered target file candidates', () => {
@@ -2496,7 +2595,10 @@ module.exports = [{
         ? { webServer: { register(route: any) { routes.set(route.path, route.handler); return () => {} } } }
         : { clientModules: {
             rebuilt(name: string) {
-              if (failClient === name) throw new Error('client rebuild failed')
+              if (failClient === name) {
+                failClient = undefined
+                throw new Error('client rebuild failed')
+              }
               clientRebuilds.push({ name, order: [...currentProfile().order] })
             },
           } }
@@ -2620,13 +2722,14 @@ module.exports = [{
   failClient = 'web-transaction-client-b'
   const clientFailed = response()
   await routes.get('/dsh-harmony/profile')(request(JSON.parse(stateBefore).order), clientFailed)
-  failClient = undefined
   expect(clientFailed.status).toBe(500)
   expect(readFileSync(join(profile, 'harmony.json'), 'utf8')).toBe(committedState)
   expect(clientRebuilds.filter(item => item.name === 'web-transaction-client').map(item => item.order)).toEqual([
     JSON.parse(stateBefore).order,
     desired,
   ])
+  expect(clientRebuilds.filter(item => item.name === 'web-transaction-client-b').map(item => item.order))
+    .toEqual([desired])
 
   let releaseStart!: () => void
   startGate = new Promise<void>(resolve => { releaseStart = resolve })
