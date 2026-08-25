@@ -1676,12 +1676,80 @@ test('rolls back every loader entry when dispose fails midway', async () => {
       this.fiber = { uid: 2, runtime: { callback: plugin } }
     },
   })
-  const first = makeEntry('multi-target', oldFirst, nextFirst)
-  const second = makeEntry('multi-target', oldSecond, nextSecond, true)
+  const first = makeEntry('multi-target', oldFirst, nextFirst, true)
+  const second = makeEntry('multi-target', oldSecond, nextSecond)
 
   await expect(reloadEntries([first, second], 1)).rejects.toThrow('dispose failed')
   expect(first.fiber.runtime.callback).toBe(oldFirst)
   expect(second.fiber.runtime.callback).toBe(oldSecond)
+})
+
+test('restarts a service consumer once when its Provider reloads in the same batch', async () => {
+  const events: string[] = []
+  let providerAvailable = true
+  let consumerMounted = true
+  let consumerActivations = 0
+  const previousProvider = () => {}
+  const nextProvider = () => {}
+  const previousConsumer = () => {}
+  const nextConsumer = () => {}
+  const provider = {
+    options: { name: 'service-provider' },
+    fiber: { uid: 1, runtime: { callback: previousProvider } },
+    loader: { unwrapExports(value: unknown) { return value } },
+    parent: { tree: { async import() { return nextProvider } } },
+    getOuterStack() { return [] },
+    async _dispose() {
+      events.push('dispose-provider')
+      providerAvailable = false
+      this.fiber = undefined
+    },
+    async _start(plugin: unknown) {
+      events.push('start-provider')
+      providerAvailable = true
+      this.fiber = { uid: 2, runtime: { callback: plugin } }
+      if (consumerMounted) consumerActivations += 1
+    },
+  } as any
+  const consumer = {
+    options: { name: 'service-consumer' },
+    fiber: { uid: 1, runtime: { callback: previousConsumer } },
+    loader: { unwrapExports(value: unknown) { return value } },
+    parent: { tree: { async import() { return nextConsumer } } },
+    getOuterStack() { return [] },
+    async _dispose() {
+      events.push('dispose-consumer')
+      consumerMounted = false
+      this.fiber = undefined
+    },
+    async _start(plugin: unknown) {
+      events.push('start-consumer')
+      consumerMounted = true
+      this.fiber = { uid: 2, runtime: { callback: plugin } }
+      if (providerAvailable) consumerActivations += 1
+    },
+  } as any
+
+  const restore = await reloadEntries([provider, consumer], 1)
+
+  expect(events).toEqual([
+    'dispose-consumer',
+    'dispose-provider',
+    'start-provider',
+    'start-consumer',
+  ])
+  expect(consumerActivations).toBe(1)
+
+  events.length = 0
+  consumerActivations = 0
+  await restore()
+  expect(events).toEqual([
+    'dispose-consumer',
+    'dispose-provider',
+    'start-provider',
+    'start-consumer',
+  ])
+  expect(consumerActivations).toBe(1)
 })
 
 test('reloads a changed patch file while the profile is running', async () => {
@@ -2626,6 +2694,7 @@ module.exports = [{
     await routes.get('/dsh-harmony/runtime')({ method: 'GET' }, result)
     return JSON.parse(result.body).reload
   }
+  expect(await runtimeStatus()).toEqual({ sequence: 0, state: 'idle' })
   const desired = [
     'dsh-harmony',
     'web-transaction-target',

@@ -231,11 +231,18 @@ export async function reloadEntries(
     } catch (rollbackError) {
       rollbackErrors.push(rollbackError)
     }
-    for (const plan of [...touched].reverse()) {
+    const restoring = touched.filter(plan => plan.entry.fiber?.runtime?.callback !== plan.previousPlugin)
+    for (const plan of [...restoring].reverse()) {
       try {
-        if (plan.entry.fiber?.runtime?.callback === plan.previousPlugin) continue
         if (plan.entry.fiber !== undefined) await plan.entry._dispose()
-        if (plan.entry.fiber === undefined) await plan.entry._start(plan.previousPlugin)
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError)
+      }
+    }
+    for (const plan of restoring) {
+      if (plan.entry.fiber !== undefined) continue
+      try {
+        await plan.entry._start(plan.previousPlugin)
       } catch (rollbackError) {
         rollbackErrors.push(rollbackError)
       }
@@ -243,11 +250,13 @@ export async function reloadEntries(
     if (rollbackErrors.length > 0) throw new AggregateError(rollbackErrors, 'dsh-harmony: loader rollback failed')
   }
 
-  const touched = []
+  const touched = new Set<(typeof plans)[number]>()
   try {
-    for (const plan of plans) {
-      touched.push(plan)
+    for (const plan of [...plans].reverse()) {
+      touched.add(plan)
       await plan.entry._dispose(plan.previous)
+    }
+    for (const plan of plans) {
       await plan.entry._start(plan.next)
       recordEntryLoad({
         id: plan.entry.id ?? plan.entry.options.name,
@@ -259,7 +268,7 @@ export async function reloadEntries(
     }
   } catch (error) {
     try {
-      await restore(touched)
+      await restore(plans.filter(plan => touched.has(plan)))
     } catch (rollbackError) {
       throw new AggregateError([error, rollbackError], 'dsh-harmony: loader rollback failed')
     }
@@ -402,21 +411,27 @@ export async function apply(ctx: Context): Promise<void> {
     patchFailures = next
   }
 
-  const enqueueUpdate = <T>(task: () => Promise<T>): Promise<T> => {
+  const enqueueUpdate = <T>(task: (beginReload: () => void) => Promise<T>): Promise<T> => {
     if (stopped) return Promise.reject(new Error('dsh-harmony: runtime is stopping'))
     const result = updateTail.then(async () => {
       if (stopped) throw new Error('dsh-harmony: runtime is stopping')
-      const sequence = ++reloadSequence
-      reloadStatus = { sequence, state: 'reloading' }
+      let sequence: number | undefined
+      const beginReload = (): void => {
+        if (sequence !== undefined) return
+        sequence = ++reloadSequence
+        reloadStatus = { sequence, state: 'reloading' }
+      }
       try {
-        const value = await task()
-        reloadStatus = { sequence, state: 'succeeded' }
+        const value = await task(beginReload)
+        if (sequence !== undefined) reloadStatus = { sequence, state: 'succeeded' }
         return value
       } catch (error) {
-        reloadStatus = {
-          sequence,
-          state: 'failed',
-          error: error instanceof Error ? error.message : String(error),
+        if (sequence !== undefined) {
+          reloadStatus = {
+            sequence,
+            state: 'failed',
+            error: error instanceof Error ? error.message : String(error),
+          }
         }
         throw error
       }
@@ -461,6 +476,7 @@ export async function apply(ctx: Context): Promise<void> {
   }
   const applyTransaction = async (
     transaction: ProfileTransaction,
+    beginReload: () => void,
     probe?: HarmonyLoadProbe,
     action?: ReloadAction,
   ): Promise<void> => {
@@ -485,7 +501,9 @@ export async function apply(ctx: Context): Promise<void> {
       }
       const hostReloadStarted = probe === undefined ? undefined : process.hrtime.bigint()
       try {
-        restoreEntries = await reload(hostEntries(packages), transaction.generation, packages)
+        const entries = hostEntries(packages)
+        if (entries.length > 0) beginReload()
+        restoreEntries = await reload(entries, transaction.generation, packages)
       } finally {
         if (probe !== undefined && hostReloadStarted !== undefined) probe.hostReloadMs = elapsedMilliseconds(hostReloadStarted)
       }
@@ -497,6 +515,7 @@ export async function apply(ctx: Context): Promise<void> {
         }
         for (const packageName of clientPackages) {
           if (modules === undefined) continue
+          beginReload()
           rebuiltClients.push(packageName)
           modules.rebuilt(packageName)
         }
@@ -538,6 +557,7 @@ export async function apply(ctx: Context): Promise<void> {
   const runTransaction = async (
     operation: HarmonyLoadProbe['operation'],
     prepare: () => ProfileTransaction,
+    beginReload: () => void,
     action?: ReloadAction,
   ): Promise<ProfileTransaction> => {
     const probe = startLoadProbe(operation)
@@ -551,7 +571,7 @@ export async function apply(ctx: Context): Promise<void> {
       throw error
     }
     if (probe !== undefined && prepareStarted !== undefined) probe.prepareMs += elapsedMilliseconds(prepareStarted)
-    await applyTransaction(transaction, probe, action)
+    await applyTransaction(transaction, beginReload, probe, action)
     return transaction
   }
 
@@ -559,7 +579,7 @@ export async function apply(ctx: Context): Promise<void> {
     force = true,
     reload?: string,
     preparedInventory?: ReturnType<typeof loaderInventory>,
-  ): Promise<void> => enqueueUpdate(async () => {
+  ): Promise<void> => enqueueUpdate(async (beginReload) => {
     const action = reload === undefined ? undefined : {
       host: new Set([reload]),
       client: new Set([reload]),
@@ -567,7 +587,7 @@ export async function apply(ctx: Context): Promise<void> {
     const inventory = preparedInventory ?? loaderInventory(ctx)
     await runTransaction(reload === undefined ? 'plugin-update' : 'manual-reload', () => (
       beginPluginUpdate(force, inventory.active, inventory.packages)
-    ), action)
+    ), beginReload, action)
     reconcileProfileRevision()
   })
 
@@ -604,7 +624,7 @@ export async function apply(ctx: Context): Promise<void> {
   })
 
   const updateProfile = async (input: () => HarmonyProfileUpdate): Promise<HarmonyRuntimeProfileUpdateResult> => {
-    const generation = await enqueueUpdate(async () => {
+    const generation = await enqueueUpdate(async (beginReload) => {
       const transaction = await runTransaction('profile-update', () => {
         const requested = input()
         const candidate = prepareHarmonyProfileUpdate(currentProfile(), requested)
@@ -617,7 +637,7 @@ export async function apply(ctx: Context): Promise<void> {
           ...(requested.patchOrder === undefined ? {} : { patchOrder: candidate.patchOrder }),
           ...(requested.disabled === undefined ? {} : { disabled: candidate.disabled }),
         })
-      })
+      }, beginReload)
       reconcileProfileRevision()
       return transaction.generation
     })
@@ -940,7 +960,7 @@ export async function apply(ctx: Context): Promise<void> {
     reloadImmediate = setImmediate(() => {
       reloadImmediate = undefined
       if (stopped) return
-      void enqueueUpdate(async () => {
+      void enqueueUpdate(async (beginReload) => {
         queued = false
         const clientTargets = [...pendingClient]
         const hostTargets = new Set(pendingHost)
@@ -955,7 +975,9 @@ export async function apply(ctx: Context): Promise<void> {
           const packageName = packageNameOf(entry.options.name)
           return packageName !== undefined && hostTargets.has(packageName)
         }) as unknown as ReloadableEntry[]
+        if (entries.length > 0) beginReload()
         await reload(entries, generation)
+        if (clientModules !== undefined && clientTargets.length > 0) beginReload()
         for (const target of clientTargets) clientModules?.rebuilt(target)
       }).catch(error => ctx.logger.error(error))
     })
