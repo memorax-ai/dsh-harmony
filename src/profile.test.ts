@@ -169,13 +169,17 @@ test('declares the built-in Settings Patch when its target plugin is present', (
   }))
 
   writeProfile({ 'dsh-harmony': '1' }, ['custom-web-bundle'])
-  expect(synchronizeHarmonyProfile(profile).plugins[0].patches)
+  const synchronized = synchronizeHarmonyProfile(profile)
+  expect(synchronized.plugins[0].patches)
     .toEqual([
       './lib/builtins/client-load-plan.patch.cjs',
       './lib/builtins/cordis-service-index.patch.cjs',
       './lib/builtins/settings.patch.cjs',
       './lib/builtins/session-profile.patch.cjs',
     ])
+  expect(synchronized.plugins[0].compatibility.integrates).toEqual({
+    '@deepseek-ai/dsh-client-ui-renderer': '^0.1.1-rc.2',
+  })
 
   rmSync(settingsDir, { recursive: true })
   writeFileSync(join(bundle, 'package.json'), JSON.stringify({ name: 'custom-web-bundle' }))

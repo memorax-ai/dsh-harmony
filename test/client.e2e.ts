@@ -21,11 +21,6 @@ interface ClientContext {
     inject(name: string, mount: () => void): void
     register(options: Registration['options'], component: unknown): void
   }
-  sessions: {
-    list: { getSnapshot(): { current?: string; byId: Record<string, unknown> } }
-    open(id: string): void
-    clear(): void
-  }
 }
 
 interface ClientModule {
@@ -116,7 +111,7 @@ const client = loaded.factory(name => {
   }
 })
 assert.match(existingPluginStyle.textContent, /dshHarmonySourceSummary\{position:sticky/)
-assert.deepEqual(Array.from(client.inject), ['slots', 'locale', 'sessions'])
+assert.deepEqual(Array.from(client.inject), ['slots', 'locale'])
 
 const registrations: Registration[] = []
 let dictionaries: Dictionaries | undefined
@@ -125,11 +120,6 @@ client.apply({
     effects.push(Promise.resolve(register()))
   },
   get() { return undefined },
-  sessions: {
-    list: { getSnapshot() { return { byId: {} } } },
-    open() {},
-    clear() {},
-  },
   locale: {
     register(namespace, value) {
       assert.equal(namespace, 'dsh-harmony')
@@ -174,7 +164,7 @@ assert.equal(workerRegistration?.options.name, 'settings.plugin.item')
 assert.equal(workerRegistration?.options.locale, 'dsh-harmony')
 assert.equal(registrations.find(value => value.options.id === 'harmony-runtime')?.options.name, 'shell.overlay')
 assert.equal(registrations.find(value => value.options.id === 'harmony-reload-notifications')?.options.name, 'shell.overlay')
-assert.equal(registrations.find(value => value.options.id === 'harmony-session-patch-profile')?.options.name, 'shell.overlay')
+assert.equal(registrations.find(value => value.options.id === 'harmony-session-patch-profile'), undefined)
 assert.equal(registrations.find(value => value.options.id === 'harmony-instance-patch-profile')?.options.name, 'shell.overlay')
 
 const profile = {
@@ -215,6 +205,7 @@ const updates: Array<{ expectedRevision: number; patchOrder: string[]; disabled:
 const workerUpdates: Array<{ expectedRevision: number; workerThreads: number }> = []
 const highlighted: string[] = []
 let inspectLargeDiff = false
+let emptyCompatibilityDeclarations = false
 const largeBefore = Array.from({ length: 1000 }, (_, index) => `const before${index} = ${index}`).join('\n')
 const largeAfter = Array.from({ length: 1000 }, (_, index) => `const after${index} = ${index}`).join('\n')
 const syntaxHighlighter = {
@@ -265,7 +256,16 @@ handleFetch = async (url, init) => {
     profile.revision += 1
     patch.state = profile.disabled.includes(patch.key) ? 'disabled' : 'bound'
   }
-  return { ok: true, json: async () => profile }
+  return { ok: true, json: async () => emptyCompatibilityDeclarations ? {
+    ...profile,
+    compatibility: [],
+    plugins: profile.plugins.map(plugin => ({
+      ...plugin,
+      before: [],
+      after: [],
+      compatibility: { requires: {}, conflicts: {}, integrates: {} },
+    })),
+  } : profile }
 }
 
 const nodeRequire = createRequire(import.meta.url)
@@ -300,11 +300,6 @@ behaviorClient.apply({
   get(name) {
     assert.equal(name, 'syntaxHighlighter')
     return syntaxHighlighter
-  },
-  sessions: {
-    list: { getSnapshot() { return { byId: {} } } },
-    open() {},
-    clear() {},
   },
   locale: {
     register() { return () => {} },
@@ -407,6 +402,67 @@ await testRenderer.act(async () => {
   await new Promise(resolve => setImmediate(resolve))
 })
 assert.match(find(node => node.props.className === 'dshHarmonyDiffEmpty').children.join(''), /too large to diff safely/)
+
+emptyCompatibilityDeclarations = true
+let emptyCompatibilityRendered!: ReturnType<typeof testRenderer.create>
+await testRenderer.act(async () => {
+  emptyCompatibilityRendered = testRenderer.create(React.createElement(behaviorComponent, {
+    t: (key: string) => dictionaries!.en[key] ?? key,
+  }))
+  await new Promise(resolve => setImmediate(resolve))
+})
+emptyCompatibilityDeclarations = false
+assert.equal(emptyCompatibilityRendered.root.findAll(node => node.props.className === 'dshHarmonyConstraint').length, 0)
+
+const instanceComponent = behaviorRegistrations.find(value => value.options.id === 'harmony-instance-patch-profile')?.component
+assert.ok(instanceComponent !== undefined)
+const previousFetch = handleFetch
+handleFetch = async url => {
+  assert.equal(url, '/dsh-harmony/instance-profile')
+  return {
+    ok: true,
+    json: async () => ({
+      state: 'mismatch',
+      recorded: { profile: 'previous', recordedAt: 1, patches: [] },
+      current: { profile: 'current', recordedAt: 2, patches: [] },
+      difference: {
+        missing: ['@scope/provider/first', 'alpha/second'],
+        added: ['beta/only'],
+        changed: ['gamma/changed'],
+        reordered: true,
+      },
+    }),
+  }
+}
+let instanceRendered!: ReturnType<typeof testRenderer.create>
+await testRenderer.act(async () => {
+  instanceRendered = testRenderer.create(React.createElement(instanceComponent, {
+    t: (key: string) => dictionaries!.en[key] ?? key,
+  }))
+  await new Promise(resolve => setImmediate(resolve))
+})
+assert.equal(instanceRendered.root.find(node => node.props.role === 'alertdialog').props.className, 'dshHarmonyRuntimeDialog dshHarmonyPatchDialog')
+const instanceCards = instanceRendered.root.findAll(node => node.props.className === 'dshHarmonySessionDiffCard')
+assert.deepEqual(instanceCards.map(node => node.props['data-kind']), ['profile', 'missing', 'added', 'changed', 'reordered'])
+assert.deepEqual(
+  instanceRendered.root.findAll(node => node.props.className === 'dshHarmonySessionPatchName').map(node => node.children.join('')),
+  ['first', 'second', 'only', 'changed'],
+)
+assert.deepEqual(
+  instanceRendered.root.findAll(node => node.props.className === 'dshHarmonySessionPatchOwner').map(node => node.children.join('')),
+  ['@scope/provider', 'alpha', 'beta', 'gamma'],
+)
+assert.deepEqual(
+  instanceRendered.root.findAll(node => node.props.className === 'dshHarmonySessionPatch').map(node => node.props['aria-label']),
+  ['@scope/provider/first', 'alpha/second', 'beta/only', 'gamma/changed'],
+)
+assert.deepEqual(
+  instanceRendered.root.findAll(node => node.props.className === 'dshHarmonySessionDiffCount').map(node => node.children.join('')),
+  ['2', '1', '1'],
+)
+assert.deepEqual(instanceRendered.root.findAll(node => node.type === 'code').map(node => node.children.join('')), ['previous', 'current'])
+assert.match(instanceRendered.root.find(node => node.props.className === 'dshHarmonySessionReordered').children.join(''), /application order differs/)
+handleFetch = previousFetch
 
 const workerComponent = behaviorRegistrations.find(value => value.options.key === 'dsh-harmony')?.component
 assert.ok(workerComponent !== undefined)

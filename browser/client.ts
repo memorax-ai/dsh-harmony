@@ -189,17 +189,40 @@ body[data-ds-dark-theme] .dshHarmonyPreviewImageDark{display:block}
 .dshHarmonyConfirmActions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
 .dshHarmonyRuntimeLayer{position:fixed;inset:0;z-index:1100;display:flex;align-items:center;justify-content:center;padding:24px;background:var(--dsw-alias-bg-mask-1)}
 .dshHarmonyRuntimeDialog{width:min(520px,100%);padding:22px;border-radius:14px;background:var(--dsw-alias-bg-layer-2);box-shadow:var(--dsw-shadow-lv3)}
+.dshHarmonyRuntimeDialog.dshHarmonyPatchDialog{width:min(680px,100%);max-height:min(720px,calc(100dvh - 48px));display:flex;flex-direction:column}
 .dshHarmonyRuntimeDialog h2{margin:0;font-size:18px;line-height:26px;text-wrap:balance}
 .dshHarmonyRuntimeDialog p{max-width:68ch;margin:8px 0 0;color:var(--dsw-alias-label-secondary);font-size:13px;line-height:21px;text-wrap:pretty}
 .dshHarmonyRuntimeError{color:var(--dsw-alias-state-error-primary)!important;overflow-wrap:anywhere}
 .dshHarmonyRuntimeActions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;margin-top:20px}
-.dshHarmonySessionDiff{display:flex;flex-direction:column;gap:5px;margin:14px 0 0;padding:10px 12px;border:1px solid rgba(217,119,6,.24);border-radius:8px;background:rgba(217,119,6,.1);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:19px}
-.dshHarmonySessionDiff code{overflow-wrap:anywhere;color:var(--dsw-alias-label-primary);font-family:var(--dsw-font-family-code,monospace);font-size:11px}
+.dshHarmonySessionDiff{min-height:0;overflow:auto;display:flex;flex-direction:column;gap:10px;margin:16px -4px 0 0;padding:1px 4px 1px 1px;scrollbar-color:var(--dsw-alias-border-l2) transparent;scrollbar-width:thin}
+.dshHarmonySessionDiffCard{flex:none;min-width:0;overflow:hidden;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-3)}
+.dshHarmonySessionDiffHeader{display:flex;align-items:center;gap:8px;padding:9px 11px}
+.dshHarmonySessionDiffState{flex:none;width:8px;height:8px;border-radius:50%;background:var(--dsw-alias-label-tertiary)}
+.dshHarmonySessionDiffCard[data-kind=missing] .dshHarmonySessionDiffState{background:var(--dsw-alias-state-error-primary)}
+.dshHarmonySessionDiffCard[data-kind=added] .dshHarmonySessionDiffState{background:var(--dsw-alias-state-success-primary)}
+.dshHarmonySessionDiffCard[data-kind=changed] .dshHarmonySessionDiffState{background:#d97706}
+.dshHarmonySessionDiffCard[data-kind=reordered] .dshHarmonySessionDiffState{background:var(--dsw-alias-state-business-primary)}
+.dshHarmonySessionDiffTitle{min-width:0;flex:1;margin:0;color:var(--dsw-alias-label-primary);font-size:12px;line-height:19px;font-weight:600}
+.dshHarmonySessionDiffCount{flex:none;min-width:22px;padding:1px 6px;border-radius:6px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);font-size:10px;line-height:16px;text-align:center;font-variant-numeric:tabular-nums}
+.dshHarmonySessionPatchList{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(250px,100%),1fr));gap:1px;margin:0;padding:1px 0 0;list-style:none;background:var(--dsw-alias-border-l2)}
+.dshHarmonySessionPatch{min-width:0;display:grid;grid-template-columns:8px minmax(0,1fr);align-items:start;gap:9px;padding:8px 11px}
+.dshHarmonySessionPatch{background:var(--dsw-alias-bg-layer-3)}
+.dshHarmonySessionPatchState{width:8px;height:8px;margin-top:5px;border-radius:50%;background:var(--dsw-alias-label-tertiary)}
+.dshHarmonySessionDiffCard[data-kind=missing] .dshHarmonySessionPatchState{background:var(--dsw-alias-state-error-primary)}
+.dshHarmonySessionDiffCard[data-kind=added] .dshHarmonySessionPatchState{background:var(--dsw-alias-state-success-primary)}
+.dshHarmonySessionDiffCard[data-kind=changed] .dshHarmonySessionPatchState{background:#d97706}
+.dshHarmonySessionPatchText{min-width:0;display:flex;flex-direction:column;gap:1px}
+.dshHarmonySessionPatchName{overflow:hidden;color:var(--dsw-alias-label-primary);font-size:12px;line-height:18px;font-weight:600;text-overflow:ellipsis;white-space:nowrap}
+.dshHarmonySessionPatchOwner{overflow:hidden;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:16px;text-overflow:ellipsis;white-space:nowrap}
+.dshHarmonySessionProfile{display:grid;grid-template-columns:minmax(0,1fr) 18px minmax(0,1fr);align-items:center;gap:8px;padding:0 11px 10px}
+.dshHarmonySessionProfile code{min-width:0;overflow:hidden;padding:5px 7px;border-radius:6px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-primary);font-family:var(--dsw-font-family-code,monospace);font-size:11px;line-height:18px;text-align:center;text-overflow:ellipsis;white-space:nowrap}
+.dshHarmonySessionProfileArrow{color:var(--dsw-alias-label-tertiary);font-size:12px;text-align:center}
+.dshHarmonyRuntimeDialog .dshHarmonySessionReordered{margin:0;padding:0 11px 10px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:18px}
 .dshHarmonyDanger{color:var(--dsw-alias-state-error-primary)}
 .dshHarmonyToast{position:fixed;z-index:1200;top:24px;left:50%;display:flex;align-items:center;gap:9px;max-width:min(560px,calc(100vw - 32px));padding:10px 14px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);box-shadow:var(--dsw-shadow-lv2);font-size:13px;line-height:20px;transform:translateX(-50%)}
 .dshHarmonyToastDot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--dsw-alias-state-business-primary)}
 .dshHarmonyToast[data-state=failed] .dshHarmonyToastDot{background:var(--dsw-alias-state-error-primary)}
-@media(max-width:680px){[role=dialog]:has(.dshHarmonyPage){max-width:calc(100vw - 24px)}[role=dialog]:has(.dshHarmonyPage)>nav{width:52px;gap:10px;padding:16px 6px 0}[role=dialog]:has(.dshHarmonyPage)>nav>div:first-child,[role=dialog]:has(.dshHarmonyPage)>nav button>span:last-child{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}[role=dialog]:has(.dshHarmonyPage)>nav button{justify-content:center;width:40px;padding:9px}[role=dialog]:has(.dshHarmonyPage)>div:last-child>div:last-child{padding-right:12px;padding-bottom:12px;padding-left:12px}.dshHarmonyPage{gap:8px}.dshHarmonyTabs{gap:12px}.dshHarmonyTab{padding-bottom:7px;font-size:11px}.dshHarmonyHeading{font-size:16px;line-height:22px}.dshHarmonyIntro{display:none}.dshHarmonyWorkspace,.dshHarmonyPatchWorkspace{display:block;overflow-y:auto}.dshHarmonyList,.dshHarmonyPatchList{min-height:220px;max-height:360px;padding:5px;gap:8px;border-radius:10px}.dshHarmonyDetail,.dshHarmonyPatchDetail{display:none}.dshHarmonyStackSummary{gap:4px;padding:8px 5px}.dshHarmonyStackGlyph{display:none}.dshHarmonyStackMeta{font-size:9px}.dshHarmonyPatchCard{grid-template-columns:22px minmax(0,1fr) auto;gap:4px;padding-right:5px}.dshHarmonyPatchGrip{display:none}.dshHarmonyIndex{font-size:9px}.dshHarmonyFooter{align-items:stretch;flex-direction:column}.dshHarmonyHint{display:none}.dshHarmonyButton{width:100%}.dshHarmonyFooterActions{width:100%}.dshHarmonyFooterActions>.dshHarmonyButton,.dshHarmonyFooterActions>.dshHarmonySecondary{width:auto;flex:1}.dshHarmonySkeleton{grid-template-columns:1fr}}
+@media(max-width:680px){[role=dialog]:has(.dshHarmonyPage){max-width:calc(100vw - 24px)}[role=dialog]:has(.dshHarmonyPage)>nav{width:52px;gap:10px;padding:16px 6px 0}[role=dialog]:has(.dshHarmonyPage)>nav>div:first-child,[role=dialog]:has(.dshHarmonyPage)>nav button>span:last-child{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}[role=dialog]:has(.dshHarmonyPage)>nav button{justify-content:center;width:40px;padding:9px}[role=dialog]:has(.dshHarmonyPage)>div:last-child>div:last-child{padding-right:12px;padding-bottom:12px;padding-left:12px}.dshHarmonyPage{gap:8px}.dshHarmonyTabs{gap:12px}.dshHarmonyTab{padding-bottom:7px;font-size:11px}.dshHarmonyHeading{font-size:16px;line-height:22px}.dshHarmonyIntro{display:none}.dshHarmonyWorkspace,.dshHarmonyPatchWorkspace{display:block;overflow-y:auto}.dshHarmonyList,.dshHarmonyPatchList{min-height:220px;max-height:360px;padding:5px;gap:8px;border-radius:10px}.dshHarmonyDetail,.dshHarmonyPatchDetail{display:none}.dshHarmonyStackSummary{gap:4px;padding:8px 5px}.dshHarmonyStackGlyph{display:none}.dshHarmonyStackMeta{font-size:9px}.dshHarmonyPatchCard{grid-template-columns:22px minmax(0,1fr) auto;gap:4px;padding-right:5px}.dshHarmonyPatchGrip{display:none}.dshHarmonyIndex{font-size:9px}.dshHarmonyFooter{align-items:stretch;flex-direction:column}.dshHarmonyHint{display:none}.dshHarmonyButton{width:100%}.dshHarmonyFooterActions{width:100%}.dshHarmonyFooterActions>.dshHarmonyButton,.dshHarmonyFooterActions>.dshHarmonySecondary{width:auto;flex:1}.dshHarmonySkeleton{grid-template-columns:1fr}.dshHarmonyRuntimeLayer{padding:12px}.dshHarmonyRuntimeDialog.dshHarmonyPatchDialog{max-height:calc(100dvh - 24px);padding:18px}.dshHarmonySessionPatchList{grid-template-columns:minmax(0,1fr)}.dshHarmonyRuntimeActions>.dshHarmonyButton,.dshHarmonyRuntimeActions>.dshHarmonySecondary{width:auto;min-width:0;flex:1}}
 @media(prefers-reduced-motion:no-preference){.dshHarmonySettingsPanel{transition:width .28s cubic-bezier(.16,1,.3,1)}.dshHarmonyStack{transition:width .22s cubic-bezier(.16,1,.3,1)}.dshHarmonyStackCover{transition:opacity .11s ease-out,box-shadow .16s ease-out}.dshHarmonyStack[data-collapsed=true] .dshHarmonyStackCover{transition:opacity .14s ease-out .14s,box-shadow .16s ease-out}.dshHarmonyPatchCard{transition:width .22s cubic-bezier(.16,1,.3,1),opacity .16s ease-out,box-shadow .16s ease-out}.dshHarmonyDropSlot{animation:dshHarmonyDropIn .13s cubic-bezier(.16,1,.3,1)}.dshHarmonyToast{animation:dshHarmonyToastIn .18s ease-out}.dshHarmonyWorkerCard{transition:border-color .16s ease-out,background .16s ease-out}.dshHarmonyWorkerPlugin{transition:color .16s ease-out,opacity .16s ease-out}.dshHarmonyWorkerChevron{transition:transform .16s ease-out}.dshHarmonyWorkerSelect{transition:border-color .16s ease-out,background .16s ease-out}}
 @keyframes dshHarmonyToastIn{from{opacity:0;transform:translate(-50%,-8px)}to{opacity:1;transform:translate(-50%,0)}}
 @keyframes dshHarmonyDropIn{from{height:0;opacity:0}to{height:10px;opacity:1}}
@@ -293,7 +316,6 @@ body[data-ds-dark-theme] .dshHarmonyPreviewImageDark{display:block}
         requirementMissing: '缺失',
         requirementInactive: '未启用',
         requirementVersion: '版本不符',
-        noConstraints: '没有声明 Harmony 顺序或兼容性关系。',
         keyboard: '长按卡片召回同插件 Patch · 拖动封面或单个 Patch · 滚轮仍可滚动',
         movedTo: '已移至第',
         positionOf: '位，共',
@@ -316,16 +338,11 @@ body[data-ds-dark-theme] .dshHarmonyPreviewImageDark{display:block}
         runtimeInstalled: '启动器已安装。下次启动 dsh 时将自动启用 Harmony。',
         runtimeWorking: '正在处理…',
         runtimeError: '操作失败',
-        sessionPatchTitle: 'Session 的 Patch 状态已变化',
-        sessionPatchBody: '这个 session 绑定的 Patch 与当前启用状态不一致。继续加载可能导致行为或上下文与原来不同。',
         sessionPatchMissing: '当前缺失',
         sessionPatchAdded: '当前新增',
         sessionPatchChanged: '实现已变化',
         sessionPatchReordered: '应用顺序已变化',
-        sessionPatchStay: '不加载，返回',
-        sessionPatchContinue: '仍然加载',
-        sessionPatchCheckErrorTitle: '无法检查 Session 的 Patch 状态',
-        sessionPatchCheckErrorBody: 'Harmony 无法读取这个 session 绑定的 Patch 信息。为避免在未知状态下加载，你可以先返回，或明确选择仍然加载。',
+        sessionPatchReorderedBody: 'Patch 内容相同，但应用顺序与记录状态不同。',
         instancePatchTitle: '实例数据使用了不同的 Patch 配置',
         instancePatchBody: '这个 DSH_HOME 上次由另一个有序 Patch profile 启动。当前实例已经继续启动并记录新状态；请确认下面的变化符合预期。',
         instancePatchProfiles: 'Profile',
@@ -417,7 +434,6 @@ body[data-ds-dark-theme] .dshHarmonyPreviewImageDark{display:block}
         requirementMissing: 'missing',
         requirementInactive: 'inactive',
         requirementVersion: 'version mismatch',
-        noConstraints: 'No Harmony order or compatibility relationships declared.',
         keyboard: 'Hold a card to recall its plugin Patches · Drag a cover or one Patch · Wheel scrolling stays available',
         movedTo: 'moved to position',
         positionOf: 'of',
@@ -440,16 +456,11 @@ body[data-ds-dark-theme] .dshHarmonyPreviewImageDark{display:block}
         runtimeInstalled: 'The launcher is installed. Harmony will activate the next time dsh starts.',
         runtimeWorking: 'Working…',
         runtimeError: 'The operation failed',
-        sessionPatchTitle: 'This session’s Patch profile changed',
-        sessionPatchBody: 'The Patches bound to this session do not match the currently enabled profile. Loading it may produce behavior or context different from the original session.',
         sessionPatchMissing: 'Missing now',
         sessionPatchAdded: 'Added now',
         sessionPatchChanged: 'Implementation changed',
         sessionPatchReordered: 'Application order changed',
-        sessionPatchStay: 'Go back without loading',
-        sessionPatchContinue: 'Load anyway',
-        sessionPatchCheckErrorTitle: 'Could not check this session’s Patch profile',
-        sessionPatchCheckErrorBody: 'Harmony could not read the Patch profile bound to this session. Go back to avoid loading it in an unknown state, or explicitly load it anyway.',
+        sessionPatchReorderedBody: 'The Patch set is unchanged, but its application order differs from the recorded state.',
         instancePatchTitle: 'Instance data used a different Patch profile',
         instancePatchBody: 'This DSH_HOME was last started with another ordered Patch profile. The current instance continued startup and recorded its new state; verify that the changes below are intentional.',
         instancePatchProfiles: 'Profiles',
@@ -489,25 +500,6 @@ body[data-ds-dark-theme] .dshHarmonyPreviewImageDark{display:block}
       patches: Array<{ key: string; providerVersion: string; fingerprint: string }>
     }
 
-    interface SessionPatchMismatch {
-      sessionId: string
-      state: 'mismatch'
-      recorded: SessionPatchProfile
-      current: SessionPatchProfile
-      difference: { missing: string[]; added: string[]; changed: string[]; reordered: boolean }
-    }
-
-    type SessionPatchCheck = SessionPatchMismatch | {
-      sessionId: string
-      state: 'match'
-      recorded: SessionPatchProfile
-      current: SessionPatchProfile
-    } | {
-      sessionId: string
-      state: 'untracked'
-      current: SessionPatchProfile
-    }
-
     interface InstancePatchMismatch {
       state: 'mismatch'
       recorded: SessionPatchProfile & { profile: string }
@@ -515,30 +507,11 @@ body[data-ds-dark-theme] .dshHarmonyPreviewImageDark{display:block}
       difference: { missing: string[]; added: string[]; changed: string[]; reordered: boolean }
     }
 
-    interface SessionPatchPromptRequest {
-      check?: SessionPatchMismatch
-      error?: string
-      resolve(allowed: boolean): void
-    }
-
-    interface SessionsService {
-      list: { getSnapshot(): { current?: string; byId: Record<string, unknown> } }
-      open(id: string): void
-      clear(): void
-    }
-
-    let sessionPatchPromptListener: ((request: SessionPatchPromptRequest) => void) | undefined
-
-    function requestSessionPatchConfirmation(input: { check: SessionPatchMismatch } | { error: string }): Promise<boolean> {
-      return new Promise((resolve) => {
-        if (sessionPatchPromptListener === undefined) {
-          resolve(window.confirm('error' in input
-            ? 'Harmony could not check the Patches bound to this session. Load it anyway?'
-            : 'The Patches bound to this session do not match the current profile. Load it anyway?'))
-          return
-        }
-        sessionPatchPromptListener({ ...input, resolve })
-      })
+    type PatchDifferenceKind = 'profile' | 'missing' | 'added' | 'changed' | 'reordered'
+    interface PatchDifferenceGroup {
+      kind: PatchDifferenceKind
+      label: string
+      values: string[]
     }
 
     interface PatchStatus {
@@ -1023,7 +996,6 @@ body[data-ds-dark-theme] .dshHarmonyPreviewImageDark{display:block}
         inject(name: string, mount: () => unknown): unknown
         register(options: Record<string, unknown>, component: unknown): unknown
       }
-      sessions: SessionsService
     }
 
     const localeNamespace = 'dsh-harmony'
@@ -1254,59 +1226,43 @@ body[data-ds-dark-theme] .dshHarmonyPreviewImageDark{display:block}
                 h('button', { ref: primary, className: 'dshHarmonyButton', type: 'button', disabled: busy, onClick: () => { void choose('install-restart') } }, busy ? t('runtimeWorking') : t('installRestart'))))))
     }
 
-    function SessionPatchPrompt({ t }: { t: Translate }) {
-      const [request, setRequest] = useState<SessionPatchPromptRequest | null>(null)
-      const current = useRef<SessionPatchPromptRequest | null>(null)
-      const queue = useRef<SessionPatchPromptRequest[]>([])
-      const layer = useRef<HTMLElement | null>(null)
-      const dialog = useRef<HTMLElement | null>(null)
-      const primary = useRef<HTMLButtonElement | null>(null)
-      current.current = request
-
-      useEffect(() => {
-        const listener = (next: SessionPatchPromptRequest) => {
-          setRequest(active => {
-            if (active === null) return next
-            queue.current.push(next)
-            return active
-          })
-        }
-        sessionPatchPromptListener = listener
-        return () => {
-          if (sessionPatchPromptListener === listener) sessionPatchPromptListener = undefined
-          current.current?.resolve(false)
-          for (const pending of queue.current.splice(0)) pending.resolve(false)
-        }
-      }, [])
-
-      const finish = (allowed: boolean) => {
-        if (request === null) return
-        request.resolve(allowed)
-        setRequest(queue.current.shift() ?? null)
+    function PatchDifferenceCards({ groups, idPrefix, t }: { groups: PatchDifferenceGroup[]; idPrefix: string; t: Translate }) {
+      const patchIdentity = (key: string) => {
+        const separator = key.lastIndexOf('/')
+        return separator < 0
+          ? { name: key, owner: '' }
+          : { name: key.slice(separator + 1), owner: key.slice(0, separator) }
       }
-      useModalFocus(request !== null, layer, dialog, primary, () => finish(false))
-      useEffect(() => { if (request !== null) primary.current?.focus() }, [request])
-
-      if (request === null) return null
-      const difference = request.check?.difference
-      const rows = difference === undefined ? [] : [
-        difference.missing.length === 0 ? null : [t('sessionPatchMissing'), difference.missing],
-        difference.added.length === 0 ? null : [t('sessionPatchAdded'), difference.added],
-        difference.changed.length === 0 ? null : [t('sessionPatchChanged'), difference.changed],
-        difference.reordered ? [t('sessionPatchReordered'), []] : null,
-      ].filter((row): row is [string, string[]] => row !== null)
-      const failed = request.error !== undefined
-      return h('div', { className: 'dshHarmonyRuntimeLayer', role: 'presentation', ref: layer },
-        h('section', { className: 'dshHarmonyRuntimeDialog', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'dsh-harmony-session-patch-title', ref: dialog, tabIndex: -1 },
-          h('h2', { id: 'dsh-harmony-session-patch-title' }, t(failed ? 'sessionPatchCheckErrorTitle' : 'sessionPatchTitle')),
-          h('p', null, t(failed ? 'sessionPatchCheckErrorBody' : 'sessionPatchBody')),
-          failed ? h('p', { className: 'dshHarmonyRuntimeError', role: 'alert' }, request.error) : null,
-          rows.length === 0 ? null : h('div', { className: 'dshHarmonySessionDiff' }, rows.map(([label, keys]) =>
-            h('div', { key: label }, h('strong', null, label), keys.length === 0 ? null : ': ',
-              keys.length === 0 ? null : h('code', null, keys.join(', '))))),
-          h('div', { className: 'dshHarmonyRuntimeActions' },
-            h('button', { ref: primary, className: 'dshHarmonySecondary', type: 'button', onClick: () => finish(false) }, t('sessionPatchStay')),
-            h('button', { className: 'dshHarmonyButton', type: 'button', onClick: () => finish(true) }, t('sessionPatchContinue')))))
+      return h('div', { className: 'dshHarmonySessionDiff' }, groups.map(group => {
+        const titleId = `${idPrefix}-${group.kind}`
+        return h('section', {
+          key: group.kind,
+          className: 'dshHarmonySessionDiffCard',
+          'data-kind': group.kind,
+          'aria-labelledby': titleId,
+        },
+        h('header', { className: 'dshHarmonySessionDiffHeader' },
+          h('span', { className: 'dshHarmonySessionDiffState', 'aria-hidden': 'true' }),
+          h('h3', { id: titleId, className: 'dshHarmonySessionDiffTitle' }, group.label),
+          group.kind === 'profile' || group.kind === 'reordered'
+            ? null
+            : h('span', { className: 'dshHarmonySessionDiffCount' }, group.values.length)),
+        group.kind === 'profile'
+          ? h('div', { className: 'dshHarmonySessionProfile', 'aria-label': `${group.values[0]} → ${group.values[1]}` },
+            h('code', { title: group.values[0] }, group.values[0]),
+            h('span', { className: 'dshHarmonySessionProfileArrow', 'aria-hidden': 'true' }, '→'),
+            h('code', { title: group.values[1] }, group.values[1]))
+          : group.kind === 'reordered'
+            ? h('p', { className: 'dshHarmonySessionReordered' }, t('sessionPatchReorderedBody'))
+            : h('ul', { className: 'dshHarmonySessionPatchList' }, group.values.map(key => {
+              const identity = patchIdentity(key)
+              return h('li', { key, className: 'dshHarmonySessionPatch', 'aria-label': key, title: key },
+                h('span', { className: 'dshHarmonySessionPatchState', 'aria-hidden': 'true' }),
+                h('span', { className: 'dshHarmonySessionPatchText' },
+                  h('span', { className: 'dshHarmonySessionPatchName' }, identity.name),
+                  identity.owner === '' ? null : h('span', { className: 'dshHarmonySessionPatchOwner' }, identity.owner)))
+            })))
+      }))
     }
 
     function InstancePatchPrompt({ t }: { t: Translate }) {
@@ -1327,21 +1283,19 @@ body[data-ds-dark-theme] .dshHarmonyPreviewImageDark{display:block}
       useModalFocus(check !== null, layer, dialog, primary, () => setCheck(null))
       if (check === null) return null
       const difference = check.difference
-      const rows = [
+      const groups: PatchDifferenceGroup[] = [
         check.recorded.profile === check.current.profile
-          ? null : [t('instancePatchProfiles'), [`${check.recorded.profile} → ${check.current.profile}`]],
-        difference.missing.length === 0 ? null : [t('sessionPatchMissing'), difference.missing],
-        difference.added.length === 0 ? null : [t('sessionPatchAdded'), difference.added],
-        difference.changed.length === 0 ? null : [t('sessionPatchChanged'), difference.changed],
-        difference.reordered ? [t('sessionPatchReordered'), []] : null,
-      ].filter((row): row is [string, string[]] => row !== null)
+          ? null : { kind: 'profile', label: t('instancePatchProfiles'), values: [check.recorded.profile, check.current.profile] },
+        difference.missing.length === 0 ? null : { kind: 'missing', label: t('sessionPatchMissing'), values: difference.missing },
+        difference.added.length === 0 ? null : { kind: 'added', label: t('sessionPatchAdded'), values: difference.added },
+        difference.changed.length === 0 ? null : { kind: 'changed', label: t('sessionPatchChanged'), values: difference.changed },
+        difference.reordered ? { kind: 'reordered', label: t('sessionPatchReordered'), values: [] } : null,
+      ].filter((group): group is PatchDifferenceGroup => group !== null)
       return h('div', { className: 'dshHarmonyRuntimeLayer', role: 'presentation', ref: layer },
-        h('section', { className: 'dshHarmonyRuntimeDialog', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'dsh-harmony-instance-patch-title', ref: dialog, tabIndex: -1 },
+        h('section', { className: 'dshHarmonyRuntimeDialog dshHarmonyPatchDialog', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'dsh-harmony-instance-patch-title', ref: dialog, tabIndex: -1 },
           h('h2', { id: 'dsh-harmony-instance-patch-title' }, t('instancePatchTitle')),
           h('p', null, t('instancePatchBody')),
-          h('div', { className: 'dshHarmonySessionDiff' }, rows.map(([label, values]) =>
-            h('div', { key: label }, h('strong', null, label), values.length === 0 ? null : ': ',
-              values.length === 0 ? null : h('code', null, values.join(', '))))),
+          h(PatchDifferenceCards, { groups, idPrefix: 'dsh-harmony-instance-diff', t }),
           h('div', { className: 'dshHarmonyRuntimeActions' },
             h('button', { ref: primary, className: 'dshHarmonyButton', type: 'button', onClick: () => setCheck(null) }, t('instancePatchDismiss')))))
     }
@@ -2465,8 +2419,8 @@ body[data-ds-dark-theme] .dshHarmonyPreviewImageDark{display:block}
                 selectedPlugin.harmony ? h('span', null, `${t('patchCount')}: ${selectedPlugin.patchCount}`) : null,
                 selectedPlugin.homepage ? h('a', { href: selectedPlugin.homepage, target: '_blank', rel: 'noreferrer' }, t('homepage')) : null,
                 selectedPlugin.bugs ? h('a', { href: selectedPlugin.bugs, target: '_blank', rel: 'noreferrer' }, t('bugs')) : null),
-              selectedPlugin.harmony
-                ? h('p', { className: 'dshHarmonyConstraint' }, constraints.length > 0 ? constraints.join(' · ') : t('noConstraints'))
+              selectedPlugin.harmony && constraints.length > 0
+                ? h('p', { className: 'dshHarmonyConstraint' }, constraints.join(' · '))
                 : null,
               selectedPlugin.harmony
                 ? h('div', { className: 'dshHarmonyDetailActions' },
@@ -2654,7 +2608,7 @@ body[data-ds-dark-theme] .dshHarmonyPreviewImageDark{display:block}
           saving ? h('span', { className: 'dshHarmonySrOnly', role: 'status' }, t('workerThreadsSaving')) : null) : null)
     }
 
-    const inject = ['slots', 'locale', 'sessions']
+    const inject = ['slots', 'locale']
     function apply(ctx: HarmonyClientContext) {
       ctx.effect(() => ctx.locale.register(localeNamespace, dictionaries), 'dsh-harmony: dictionaries')
       ctx.effect(() => {
@@ -2678,72 +2632,10 @@ body[data-ds-dark-theme] .dshHarmonyPreviewImageDark{display:block}
       }, ReloadNotifications))
       ctx.slots.inject('shell.overlay', () => ctx.slots.register({
         name: 'shell.overlay',
-        id: 'harmony-session-patch-profile',
-        order: -108,
-        locale: localeNamespace,
-      }, SessionPatchPrompt))
-      ctx.slots.inject('shell.overlay', () => ctx.slots.register({
-        name: 'shell.overlay',
         id: 'harmony-instance-patch-profile',
         order: -107,
         locale: localeNamespace,
       }, InstancePatchPrompt))
-      ctx.effect(() => {
-        const approved = new Map<string, string>()
-        let lastAllowed = ctx.sessions.list.getSnapshot().current
-        const global = globalThis as typeof globalThis & {
-          __dshHarmonyBeforeSessionOpen?: (sessionId: string) => Promise<boolean>
-        }
-        const previous = global.__dshHarmonyBeforeSessionOpen
-        const guard = async (sessionId: string): Promise<boolean> => {
-          try {
-            const response = await fetch(`/dsh-harmony/session-profile?${new URLSearchParams({ sessionId })}`, { cache: 'no-store' })
-            if (!response.ok) throw new Error(`session Patch profile check failed: ${response.status}`)
-            const check = await response.json() as SessionPatchCheck
-            const signature = JSON.stringify(check.current.patches)
-            if (approved.get(sessionId) === signature) {
-              lastAllowed = sessionId
-              return true
-            }
-            const prior = lastAllowed
-            const allowed = check.state !== 'mismatch' || await requestSessionPatchConfirmation({ check })
-            if (allowed) {
-              approved.set(sessionId, signature)
-              lastAllowed = sessionId
-              return true
-            }
-            queueMicrotask(() => {
-              const snapshot = ctx.sessions.list.getSnapshot()
-              if (snapshot.current !== sessionId) return
-              if (prior !== undefined && prior !== sessionId && snapshot.byId[prior] !== undefined) ctx.sessions.open(prior)
-              else ctx.sessions.clear()
-            })
-            return false
-          } catch (error) {
-            console.warn('[dsh-harmony] session Patch profile check failed', error)
-            const prior = lastAllowed
-            const allowed = await requestSessionPatchConfirmation({ error: error instanceof Error ? error.message : String(error) })
-            if (allowed) {
-              lastAllowed = sessionId
-              return true
-            }
-            queueMicrotask(() => {
-              const snapshot = ctx.sessions.list.getSnapshot()
-              if (snapshot.current !== sessionId) return
-              if (prior !== undefined && prior !== sessionId && snapshot.byId[prior] !== undefined) ctx.sessions.open(prior)
-              else ctx.sessions.clear()
-            })
-            return false
-          }
-        }
-        global.__dshHarmonyBeforeSessionOpen = guard
-        return () => {
-          if (global.__dshHarmonyBeforeSessionOpen === guard) {
-            if (previous === undefined) delete global.__dshHarmonyBeforeSessionOpen
-            else global.__dshHarmonyBeforeSessionOpen = previous
-          }
-        }
-      }, 'dsh-harmony: session Patch profile guard')
       ctx.effect(async () => {
         const status = await fetch('/dsh-harmony/runtime', { cache: 'no-store' }).then(response => response.json())
         if (status.state !== 'active') return

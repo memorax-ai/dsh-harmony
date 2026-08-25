@@ -1,6 +1,6 @@
 {
   "name": "dsh-harmony",
-  "version": "0.8.7",
+  "version": "0.8.8",
   "description": "A library for patching, replacing and decorating DeepSeek Harness plugins during runtime",
   "keywords": [
     "deepseek",
@@ -52,7 +52,12 @@
         "zh-CN": "一个用于在运行时修补、替换和装饰 DeepSeek Harness 插件的库。",
         "en": "A library for patching, replacing and decorating DeepSeek Harness plugins during runtime"
       },
-      "category": "plugin-development"
+      "category": "plugin-development",
+      "compatibility": {
+        "integrates": {
+          "@deepseek-ai/dsh-client-ui-renderer": "^0.1.1-rc.2"
+        }
+      }
     },
     "bundle": {
       "patch": "./harmony.patch.yml"

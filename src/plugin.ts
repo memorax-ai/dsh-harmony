@@ -283,6 +283,13 @@ export async function apply(ctx: Context): Promise<void> {
   const profileDir = currentProfile().dir
   const sessionProfiles = new HarmonySessionProfileStore(harmonyDataRoot(profileDir))
   const instanceProfileCheck = await sessionProfiles.startInstance(basename(profileDir), currentSessionPatchProfile())
+  let instanceProfilePromptPending = instanceProfileCheck.state === 'mismatch'
+  const takeInstanceProfileCheck = () => {
+    if (instanceProfileCheck.state !== 'mismatch') return instanceProfileCheck
+    if (!instanceProfilePromptPending) return { state: 'acknowledged' }
+    instanceProfilePromptPending = false
+    return instanceProfileCheck
+  }
   if (instanceProfileCheck.state === 'mismatch') {
     const difference = instanceProfileCheck.difference
     ctx.logger.warn?.([
@@ -775,7 +782,7 @@ export async function apply(ctx: Context): Promise<void> {
         return sendJson(response, sessionProfiles.check(sessionId, currentSessionPatchProfile()))
       }
       if (path === '/dsh-harmony/instance-profile' && request.method === 'GET') {
-        return sendJson(response, instanceProfileCheck)
+        return sendJson(response, takeInstanceProfileCheck())
       }
       response.writeHead(404)
       response.end()
@@ -882,7 +889,7 @@ export async function apply(ctx: Context): Promise<void> {
           response.end()
           return
         }
-        return sendJson(response, instanceProfileCheck)
+        return sendJson(response, takeInstanceProfileCheck())
       },
     })]
     for (const [path, url, contentType] of imageAssets) {

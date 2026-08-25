@@ -34,6 +34,7 @@ import {
   watchProfile,
 } from './runtime.js'
 import { apply as applyHarmonyPlugin, reloadEntries } from './plugin.js'
+import { HARMONY_INSTANCE_PROFILE_FILE } from './session-profile.js'
 
 const root = mkdtempSync(join(tmpdir(), 'dsh-harmony-'))
 const WATCH_READY_DELAY = 750
@@ -2615,6 +2616,12 @@ module.exports = [{
     patchOrder: currentProfile().patchOrder,
     disabled: currentProfile().disabled,
   }))
+  writeFileSync(join(profile, HARMONY_INSTANCE_PROFILE_FILE), JSON.stringify({
+    schemaVersion: 1,
+    profile: 'web-transaction-profile',
+    recordedAt: 0,
+    patches: [],
+  }))
 
   const previousPlugin = () => {}
   const nextPlugin = () => {}
@@ -2694,6 +2701,12 @@ module.exports = [{
     await routes.get('/dsh-harmony/runtime')({ method: 'GET' }, result)
     return JSON.parse(result.body).reload
   }
+  const firstInstanceProfile = response()
+  await routes.get('/dsh-harmony/instance-profile')({ method: 'GET' }, firstInstanceProfile)
+  expect(JSON.parse(firstInstanceProfile.body)).toMatchObject({ state: 'mismatch' })
+  const repeatedInstanceProfile = response()
+  await routes.get('/dsh-harmony/instance-profile')({ method: 'GET' }, repeatedInstanceProfile)
+  expect(JSON.parse(repeatedInstanceProfile.body)).toEqual({ state: 'acknowledged' })
   expect(await runtimeStatus()).toEqual({ sequence: 0, state: 'idle' })
   const desired = [
     'dsh-harmony',
