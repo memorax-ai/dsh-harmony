@@ -5,7 +5,7 @@ const packageResolution: HarmonySourcePatch = {
   description: 'Resolves activated client packages through the Harmony generation inventory.',
   target: {
     package: '@deepseek-ai/dsh-client-modules',
-    version: '>=0.1.1-rc.2',
+    version: '>=0.1.1-rc.2 <0.1.2-0',
     file: 'lib/index.js',
   },
   select: 'MethodDeclaration[name.name="resolveMeta"] CallExpression[expression.name.name="resolvePkgJson"]',
@@ -24,7 +24,7 @@ const moduleGraph: HarmonySourcePatch = {
   description: 'Adds dependencies found in Patch-transformed client bundles to their arrival graph.',
   target: {
     package: '@deepseek-ai/dsh-client-modules',
-    version: '>=0.1.1-rc.2',
+    version: '>=0.1.1-rc.2 <0.1.2-0',
     file: 'lib/index.js',
   },
   select: 'FunctionDeclaration[name.name="graphRow"]',

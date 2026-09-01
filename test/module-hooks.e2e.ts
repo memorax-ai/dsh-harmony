@@ -44,6 +44,7 @@ const files = {
   typescriptHelper: join(target, 'lib/helper.ts'),
   typescriptValue: join(target, 'lib/value.ts'),
 }
+let aliasSymlink = false
 
 try {
   mkdirSync(join(target, 'lib'), { recursive: true })
@@ -120,7 +121,13 @@ export function helper(): number { return value }
   writeFileSync(importOnlyProbe, 'export { selected } from "module-hook-import-only"\n')
   writeFileSync(arbitraryProbe, 'export { selected } from "module-hook-arbitrary"\n')
   writeFileSync(arbitraryCommonJSProbe, 'module.exports = require("module-hook-arbitrary-commonjs")\n')
-  symlinkSync(files.alias, files.aliasLink)
+  try {
+    symlinkSync(files.alias, files.aliasLink)
+    aliasSymlink = true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EPERM') throw error
+    writeFileSync(files.aliasLink, readFileSync(files.alias))
+  }
   writeFileSync(join(provider, 'package.json'), JSON.stringify({
     name: 'module-hook-provider', version: '1.0.0',
     dsh: { harmony: { patches: ['./patch.cjs'] } },
@@ -238,7 +245,7 @@ module.exports = [
 
   const array = await import(`${urls.array}?dsh-harmony=${generation}`)
   const typed = await import(`${urls.typed}?dsh-harmony=${generation}`)
-  await import(`${urls.aliasLink}?dsh-harmony=${generation}`)
+  if (aliasSymlink) await import(`${urls.aliasLink}?dsh-harmony=${generation}`)
   await import(`${urls.idempotent}?dsh-harmony=${generation}`)
   const typescript = await import(`${urls.typescriptEntry}?dsh-harmony=${generation}`)
 
@@ -248,7 +255,7 @@ module.exports = [
   assert.ok(dependentPackages(['module-hook-target']).has('module-hook-consumer'))
   assert.equal(typed.value, 2)
   assert.equal(typescript.value, 3)
-  assert.equal((globalThis as any).__dshHarmonyAliasApplications, 1)
+  if (aliasSymlink) assert.equal((globalThis as any).__dshHarmonyAliasApplications, 1)
   assert.equal((globalThis as any).__dshHarmonyIdempotentApplications, 1)
   const loaderStatus = getPatchStatuses().find(patch => patch.key === 'module-hook-provider/typescript-loader')
   assert.equal(loaderStatus?.state, 'bound')

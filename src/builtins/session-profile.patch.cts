@@ -6,7 +6,7 @@ const patch: HarmonySourcePatch = {
   description: 'Checks a session-bound Patch profile before its history is loaded.',
   target: {
     package: '@deepseek-ai/dsh-client-runtime',
-    version: '>=0.1.0-rc.8',
+    version: '>=0.1.0-rc.8 <0.1.2-0',
     file: 'lib/client.js',
   },
   select: 'SourceFile',
