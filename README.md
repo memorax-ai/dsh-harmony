@@ -79,7 +79,7 @@ Load [`use-dsh-harmony`](https://github.com/memorax-ai/dsh-harmony/blob/main/.ag
 
 ## Install
 
-Requires Node.js `^22.15.0` or `>=23.5.0` and a current `@deepseek-ai/dsh` installation. The built-in DSH integrations are verified through `0.1.1-rc.2`. Harmony does not gate DSH versions during installation; Patch target ranges are advisory and Harmony still attempts each Patch against newer releases with visible drift warnings and exact-match checks.
+Requires Node.js `^22.15.0` or `>=23.5.0` and a current `@deepseek-ai/dsh` installation. The built-in DSH integrations are verified for `0.1.1-rc.2` and `0.1.2-alpha.4`; their compatibility lanes are bounded independently so older selectors are not widened across the `0.1.2` internal refactors. Harmony does not gate DSH versions during installation; Patch target ranges are advisory and Harmony still attempts each Patch against newer releases with visible drift warnings and exact-match checks.
 
 ```sh
 npm install -g @deepseek-ai/dsh@0.1.1-rc.2

@@ -1,14 +1,11 @@
 import type ts from 'typescript'
 import type { HarmonySourcePatch } from '../index.js'
+import { activeDshVersion, sessionProfileTarget } from './dsh-compat.cjs'
 
 const patch: HarmonySourcePatch = {
   id: 'session-profile-guard',
   description: 'Checks a session-bound Patch profile before its history is loaded.',
-  target: {
-    package: '@deepseek-ai/dsh-client-runtime',
-    version: '>=0.1.0-rc.8 <0.1.2-0',
-    file: 'lib/client.js',
-  },
+  target: sessionProfileTarget(activeDshVersion()),
   select: 'SourceFile',
   expect: 1,
   apply({ sourceFile, edit, query }) {

@@ -80,7 +80,7 @@ if (isHarmonyCommand) {
     await writeStdout(HARMONY_HELP)
     process.exit(0)
   }
-  const [{ configuredProfileCandidates, initProfile, PROFILE_TEMPLATES, resolveProfileDir }, {
+  const [{ configuredProfileCandidates, initShippedProfile, resolveProfileDir }, {
     inspectHarmonyRuntime,
     readHarmonyRuntime,
     reloadHarmonyRuntime,
@@ -102,8 +102,8 @@ if (isHarmonyCommand) {
     import('./order.js'),
   ])
   const profileDir = resolveProfileDir(profile!)
-  if (!existsSync(join(profileDir!, 'package.json')) && PROFILE_TEMPLATES[profile!] !== undefined) {
-    initProfile(profileDir!, PROFILE_TEMPLATES[profile!])
+  if (!existsSync(join(profileDir!, 'package.json'))) {
+    initShippedProfile(profileDir!, profile!)
   }
   if (!existsSync(join(profileDir!, 'package.json'))) {
     fail(text(

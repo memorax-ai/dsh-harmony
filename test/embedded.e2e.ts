@@ -19,6 +19,7 @@ const appBoot = join(nodeModules, '@deepseek-ai/dsh-app-boot')
 const configuredModules = join(root, 'desktop-host/node_modules')
 const configuredOfficialPackage = join(configuredModules, '@deepseek-ai/dsh')
 const configuredAppBoot = join(configuredModules, '@deepseek-ai/dsh-app-boot')
+const embeddedDshCompat = join(embeddedHarmony, 'lib/builtins/dsh-compat.cjs')
 const home = join(root, 'home')
 const profile = join(root, 'profile')
 mkdirSync(embeddedHarmony, { recursive: true })
@@ -39,11 +40,19 @@ for (const dependency of [
 }
 writeFileSync(join(officialPackage, 'package.json'), JSON.stringify({
   name: '@deepseek-ai/dsh',
+  version: '0.1.1-rc.2',
   type: 'module',
   exports: { './lib/bin.js': './lib/bin.js' },
 }))
 writeFileSync(join(officialPackage, 'lib/bin.js'), `
-process.stdout.write(JSON.stringify({ entry: 'official', active: process.env.DSH_HARMONY_ACTIVE }))
+import { createRequire } from 'node:module'
+const require = createRequire(import.meta.url)
+const { activeDshVersion, sessionProfileTarget } = require(${JSON.stringify(embeddedDshCompat)})
+const version = activeDshVersion()
+process.stdout.write(JSON.stringify({
+  entry: 'official', active: process.env.DSH_HARMONY_ACTIVE, version,
+  sessionPackage: sessionProfileTarget(version).package,
+}))
 `)
 writeFileSync(join(appBoot, 'package.json'), JSON.stringify({
   name: '@deepseek-ai/dsh-app-boot',
@@ -58,8 +67,21 @@ export function resolveProfileDir() { return process.env.DSH_HARMONY_TEST_PROFIL
 cpSync(officialPackage, configuredOfficialPackage, { recursive: true })
 cpSync(appBoot, configuredAppBoot, { recursive: true })
 const configuredEntry = join(configuredOfficialPackage, 'lib/bin.js')
+writeFileSync(join(configuredOfficialPackage, 'package.json'), JSON.stringify({
+  name: '@deepseek-ai/dsh',
+  version: '0.1.2-alpha.4',
+  type: 'module',
+  exports: { './lib/bin.js': './lib/bin.js' },
+}))
 writeFileSync(configuredEntry, `
-process.stdout.write(JSON.stringify({ entry: 'configured', active: process.env.DSH_HARMONY_ACTIVE }))
+import { createRequire } from 'node:module'
+const require = createRequire(import.meta.url)
+const { activeDshVersion, sessionProfileTarget } = require(${JSON.stringify(embeddedDshCompat)})
+const version = activeDshVersion()
+process.stdout.write(JSON.stringify({
+  entry: 'configured', active: process.env.DSH_HARMONY_ACTIVE, version,
+  sessionPackage: sessionProfileTarget(version).package,
+}))
 `)
 
 try {
@@ -71,7 +93,12 @@ try {
     env: { ...process.env, DSH_HOME: home },
   })
   assert.equal(delegated.status, 0, delegated.stderr)
-  assert.deepEqual(JSON.parse(delegated.stdout), { entry: 'official', active: '1' })
+  assert.deepEqual(JSON.parse(delegated.stdout), {
+    entry: 'official',
+    active: '1',
+    version: '0.1.1-rc.2',
+    sessionPackage: '@deepseek-ai/dsh-client-runtime',
+  })
   assert.equal(existsSync(home), false)
 
   const configured = spawnSync(process.execPath, [
@@ -82,7 +109,12 @@ try {
     env: { ...process.env, DSH_HOME: home, DSH_HARMONY_DSH_ENTRY: configuredEntry },
   })
   assert.equal(configured.status, 0, configured.stderr)
-  assert.deepEqual(JSON.parse(configured.stdout), { entry: 'configured', active: '1' })
+  assert.deepEqual(JSON.parse(configured.stdout), {
+    entry: 'configured',
+    active: '1',
+    version: '0.1.2-alpha.4',
+    sessionPackage: '@deepseek-ai/dsh-api-session-controller',
+  })
 
   const profileModules = join(profile, 'node_modules')
   const provider = join(profileModules, 'large-provider')

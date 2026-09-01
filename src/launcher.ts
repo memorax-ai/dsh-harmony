@@ -2,7 +2,7 @@ import { channel } from 'node:diagnostics_channel'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { configuredProfileActivation, dshEntry, initProfile, PROFILE_TEMPLATES } from './dsh.js'
+import { configuredProfileActivation, dshEntry, initShippedProfile } from './dsh.js'
 import {
   discoverProfile,
   inspectPatchTargetsAsync,
@@ -65,8 +65,8 @@ export async function launchDsh(args: string[], profile: string | undefined, pro
   })
 
   if (!isPluginCommand && profileDir !== undefined && !existsSync(join(profileDir, 'package.json'))
-    && profile !== undefined && PROFILE_TEMPLATES[profile] !== undefined) {
-    initProfile(profileDir, PROFILE_TEMPLATES[profile])
+    && profile !== undefined) {
+    initShippedProfile(profileDir, profile)
   }
 
   let requiredProviderPatches: string[] = []

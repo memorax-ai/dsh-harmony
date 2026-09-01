@@ -1,5 +1,12 @@
+import { createRequire } from 'node:module'
 import { describe, expect, test } from 'vitest'
+import type { HarmonySourcePatch } from './index.js'
 import { applySourcePatch } from './transform.js'
+
+const require = createRequire(import.meta.url)
+const { sessionProfileTarget } = require('../lib/builtins/dsh-compat.cjs') as {
+  sessionProfileTarget(version: string): import('./index.js').HarmonyPatchTarget
+}
 
 function selected(source: string, selector: string): string[] {
   const matches: string[] = []
@@ -70,4 +77,46 @@ test('reuses an exact Patch transition until its fingerprint changes', () => {
   expect(applications).toBe(1)
   expect(apply('v2')).toContain('value = 2')
   expect(applications).toBe(2)
+})
+
+test('keeps legacy and DSH 0.1.2 session targets in separate version lanes', () => {
+  expect(sessionProfileTarget('0.1.1-rc.2')).toEqual({
+    package: '@deepseek-ai/dsh-client-runtime',
+    version: '>=0.1.0-rc.8 <0.1.2-0',
+    file: 'lib/client.js',
+  })
+  expect(sessionProfileTarget('0.1.2-alpha.4')).toEqual({
+    package: '@deepseek-ai/dsh-api-session-controller',
+    version: '>=0.1.2-alpha.4 <0.1.3-0',
+    file: 'lib/client.js',
+  })
+})
+
+test('adapts the DSH 0.1.2 loader-aware client package resolver', () => {
+  const patches = require('../lib/builtins/client-load-plan.patch.cjs') as HarmonySourcePatch[]
+  const patch = patches.find(candidate => candidate.id === 'client-package-resolution')!
+  const source = `
+class ClientModules {
+  resolveMeta(loaderName, baseUrl) {
+    const located = this.locatePkgJson(loaderName, baseUrl)
+    if (located === void 0) return null
+    const { packageName, path: pkgPath } = located
+    return { packageName, pkgPath }
+  }
+}
+`
+  const transformed = applySourcePatch(
+    '/tmp/dsh-client-modules-012.js',
+    '@deepseek-ai/dsh-client-modules/lib/index.js',
+    source,
+    source,
+    { key: 'dsh-harmony/client-package-resolution', owner: 'dsh-harmony', declaration: 'fixture', fingerprint: '012' },
+    patch,
+    [],
+    () => [],
+  )
+  expect(transformed.matches).toBe(1)
+  expect(transformed.source).toContain('__dshHarmonyResolvePackageManifest?.(loaderName)')
+  expect(transformed.source).toContain('this.locatePkgJson(loaderName, baseUrl)')
+  expect(transformed.source).toContain('packageName: JSON.parse(readFileSync(harmonyPath, "utf8")).name')
 })

@@ -15,6 +15,7 @@ export const dshEntry = configuredEntry === undefined
   : resolve(configuredEntry)
 
 const dshRequire = createRequire(dshEntry)
+process.env.DSH_HARMONY_ACTIVE_DSH_ENTRY = dshEntry
 process.env.DSH_HARMONY_ACTIVE = '1'
 
 const appBoot: AppBoot = await import(
@@ -22,6 +23,30 @@ const appBoot: AppBoot = await import(
 )
 
 export const { initProfile, PROFILE_TEMPLATES, resolveProfileDir } = appBoot
+
+interface CurrentProfileTemplate {
+  bundles: string[]
+  patchReload?: 'live' | 'startup'
+}
+
+type CompatibleProfileTemplate = string[] | CurrentProfileTemplate
+
+/** Initialize a shipped profile across the legacy array and current object template shapes. */
+export function initShippedProfile(dir: string, name: string): boolean {
+  const template = (PROFILE_TEMPLATES as unknown as Record<string, CompatibleProfileTemplate | undefined>)[name]
+  if (template === undefined) return false
+  const bundles = Array.isArray(template) ? template : template.bundles
+  const patchReload = Array.isArray(template) ? undefined : template.patchReload
+  if (!Array.isArray(bundles) || !bundles.every(bundle => typeof bundle === 'string')) {
+    throw new TypeError(`dsh-harmony: invalid DSH profile template ${JSON.stringify(name)}`)
+  }
+  ;(initProfile as unknown as (
+    profileDir: string,
+    profileBundles: string[],
+    reload?: CurrentProfileTemplate['patchReload'],
+  ) => void)(dir, bundles, patchReload)
+  return true
+}
 
 const resolvedDshInstallAnchor = findPackageJSON('@deepseek-ai/dsh', pathToFileURL(dshEntry))
 if (resolvedDshInstallAnchor === undefined) throw new Error('dsh-harmony: cannot locate the active @deepseek-ai/dsh package')
