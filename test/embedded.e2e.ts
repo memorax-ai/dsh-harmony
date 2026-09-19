@@ -116,6 +116,24 @@ try {
     sessionPackage: '@deepseek-ai/dsh-api-session-controller',
   })
 
+  // Newer DSH entries are inert on import and expose runCli instead.
+  writeFileSync(configuredEntry, `
+let calls = 0
+export async function runCli() {
+  if (++calls !== 1) throw new Error('CLI ran twice')
+  process.stdout.write(JSON.stringify({ calls, args: process.argv.slice(2) }))
+}
+if (import.meta.main) await runCli()
+`)
+  const explicitCli = spawnSync(process.execPath, [
+    join(embeddedHarmony, 'lib/bin.js'), '--version',
+  ], {
+    encoding: 'utf8',
+    env: { ...process.env, DSH_HOME: home, DSH_HARMONY_DSH_ENTRY: configuredEntry },
+  })
+  assert.equal(explicitCli.status, 0, explicitCli.stderr)
+  assert.deepEqual(JSON.parse(explicitCli.stdout), { calls: 1, args: ['--version'] })
+
   const profileModules = join(profile, 'node_modules')
   const provider = join(profileModules, 'large-provider')
   const target = join(profileModules, 'large-target')

@@ -25,7 +25,7 @@ Use a Source Patch for every browser target. Semantic handlers execute in Node.j
 
 ## Install Harmony
 
-Require Node.js `^22.15.0` or `>=23.5.0` and a current `@deepseek-ai/dsh` installation. Built-in DSH integrations are verified for `0.1.1-rc.2` and `0.1.2-alpha.4`; their compatibility lanes are bounded independently so legacy selectors do not span the `0.1.2` internal refactors. Harmony does not gate DSH versions during installation; Patch target ranges are advisory and newer releases are still attempted with drift warnings and exact-match checks.
+Require Node.js `^22.15.0` or `>=23.5.0` and a current `@deepseek-ai/dsh` installation. Harmony 0.8.11 adapts legacy self-executing entries, newer `runCli()` entries, and Windows namespaced profile paths. Legacy selectors stay below `0.1.2`; modern selectors cover `>=0.1.2-alpha.4 <0.1.7-0`, including prereleases. Keep compatible versions working without requiring an upgrade merely for a version change. Outside these lanes, ranges remain advisory: attempt exact matching with drift warnings. Upgrade Harmony when upstream interfaces actually need adaptation. The regression baseline is `0.1.1-rc.2`; isolated Web startup, Patch binding, live CLI, and client hot-reload checks cover `0.1.2-rc.1`, `0.1.5-rc.2`, and `0.1.6-alpha.2`. These checks do not cover browser interactions or model conversations.
 
 ```sh
 node --version

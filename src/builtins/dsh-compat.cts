@@ -7,7 +7,7 @@ import type { HarmonyPatchTarget } from '../index.js'
 
 export const LEGACY_CLIENT_RANGE = '>=0.1.1-rc.2 <0.1.2-0'
 export const LEGACY_SHARED_RANGE = '>=0.1.0-rc.8 <0.1.2-0'
-export const DSH_012_RANGE = '>=0.1.2-alpha.4 <0.1.3-0'
+export const DSH_MODERN_RANGE = '>=0.1.2-alpha.4 <0.1.7-0'
 
 export function activeDshVersion(): string {
   const entry = process.env.DSH_HARMONY_ACTIVE_DSH_ENTRY ?? process.env.DSH_HARMONY_DSH_ENTRY
@@ -26,7 +26,7 @@ export function sessionProfileTarget(version: string): HarmonyPatchTarget {
   return semver.gte(version, '0.1.2-0')
     ? {
         package: '@deepseek-ai/dsh-api-session-controller',
-        version: DSH_012_RANGE,
+        version: DSH_MODERN_RANGE,
         file: 'lib/client.js',
       }
     : {

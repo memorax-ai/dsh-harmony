@@ -8,6 +8,29 @@ permissions:
   contents: read
 
 jobs:
+  upstream:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        dsh: [0.1.2-rc.1, 0.1.5-rc.2, 0.1.6-alpha.2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.19.0
+          cache: npm
+      - run: npm ci
+      - name: Install isolated upstream
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/upstream"
+          echo '{"private":true}' > "$RUNNER_TEMP/upstream/package.json"
+          npm install --prefix "$RUNNER_TEMP/upstream" --ignore-scripts --no-audit --no-fund "@deepseek-ai/dsh@${{ matrix.dsh }}"
+      - name: Verify startup and live client reload
+        shell: bash
+        run: DSH_HARMONY_DSH_ENTRY="$RUNNER_TEMP/upstream/node_modules/@deepseek-ai/dsh/lib/bin.js" npm run test:upstream
   test:
     runs-on: ${{ matrix.os }}
     strategy:

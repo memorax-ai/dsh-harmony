@@ -99,5 +99,7 @@ export async function launchDsh(args: string[], profile: string | undefined, pro
     process.argv.splice(index, 0, ...harmonyPatches.flatMap(patch => ['--patch', patch]))
   }
 
-  await import(pathToFileURL(dshEntry).href)
+  const entry = await import(pathToFileURL(dshEntry).href)
+  // Older DSH entries execute on import; newer entries expose an explicit CLI.
+  if (typeof entry.runCli === 'function') await entry.runCli()
 }

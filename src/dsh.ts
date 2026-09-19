@@ -1,7 +1,7 @@
 import { readFileSync, realpathSync } from 'node:fs'
 import { createRequire, findPackageJSON } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import type { EntryOptions } from '@deepseek-ai/cordis-plugin-loader'
 import semver from 'semver'
 
@@ -50,7 +50,9 @@ export function initShippedProfile(dir: string, name: string): boolean {
 
 const resolvedDshInstallAnchor = findPackageJSON('@deepseek-ai/dsh', pathToFileURL(dshEntry))
 if (resolvedDshInstallAnchor === undefined) throw new Error('dsh-harmony: cannot locate the active @deepseek-ai/dsh package')
-const dshInstallAnchor = resolvedDshInstallAnchor
+// findPackageJSON may return Windows namespaced paths. Keep the profile API
+// and Node's non-native realpath implementation on ordinary filesystem paths.
+const dshInstallAnchor = fileURLToPath(pathToFileURL(resolvedDshInstallAnchor))
 
 function packageNameOf(specifier: string): string | undefined {
   if (specifier.startsWith('.') || specifier.startsWith('/') || specifier.startsWith('file:') || specifier.includes(':')) {
@@ -100,7 +102,8 @@ function harmonyRequirements(manifest: DshPackageManifest): Record<string, strin
 }
 
 function realFile(path: string): string {
-  try { return realpathSync(path) } catch { return resolve(path) }
+  const filename = fileURLToPath(pathToFileURL(path))
+  try { return realpathSync(filename) } catch { return resolve(filename) }
 }
 
 export function configuredProfileActivation(
@@ -134,7 +137,7 @@ export function configuredProfileActivation(
   ]))
   const anchors = [
     join(profileDir, 'package.json'),
-    ...profile.layers.map(layer => join(realpathSync(layer.packageDir), 'package.json')),
+    ...profile.layers.map(layer => join(realpathSync(fileURLToPath(pathToFileURL(layer.packageDir))), 'package.json')),
     dshInstallAnchor,
   ]
   const manifests = [...configuredPackages].map(packageName => {

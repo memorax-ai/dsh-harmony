@@ -1,6 +1,6 @@
 import type ts from 'typescript'
 import type { HarmonySourcePatch } from '../index.js'
-import { DSH_012_RANGE, LEGACY_SHARED_RANGE } from './dsh-compat.cjs'
+import { DSH_MODERN_RANGE, LEGACY_SHARED_RANGE } from './dsh-compat.cjs'
 
 function exactlyOne<T extends ts.Node>(nodes: T[], description: string): T {
   if (nodes.length !== 1) {
@@ -14,7 +14,7 @@ const patch: HarmonySourcePatch = {
   description: 'Adds Harmony Patch management to the DSH Settings window.',
   target: {
     package: '@deepseek-ai/dsh-client-ui-settings-general',
-    version: `${LEGACY_SHARED_RANGE} || ${DSH_012_RANGE}`,
+    version: `${LEGACY_SHARED_RANGE} || ${DSH_MODERN_RANGE}`,
     file: 'lib/client.js',
   },
   select: 'SourceFile',

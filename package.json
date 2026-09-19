@@ -1,6 +1,6 @@
 {
   "name": "dsh-harmony",
-  "version": "0.8.10",
+  "version": "0.8.11",
   "description": "A library for patching, replacing and decorating DeepSeek Harness plugins during runtime",
   "keywords": [
     "deepseek",
@@ -102,6 +102,7 @@
     "test:integration": "vitest run src/profile.test.ts src/runtime.test.ts src/tui.test.ts",
     "test:e2e": "node test/hook.e2e.ts && node test/module-hooks.e2e.ts && node test/load-plan.e2e.ts && node test/client.e2e.ts && node test/first-boot.e2e.ts && node test/embedded.e2e.ts && node test/shim.e2e.ts && node test/bootstrap.e2e.ts && node test/runtime-gate.e2e.ts",
     "test:package": "node test/package.e2e.ts",
+    "test:upstream": "node test/upstream.e2e.ts",
     "check": "npm test",
     "prepare": "npm run build",
     "postinstall": "node -e \"if (process.env.npm_config_global === 'true') import('./scripts/postinstall.cjs')\""

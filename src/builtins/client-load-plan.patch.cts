@@ -1,7 +1,7 @@
 import type { HarmonySourcePatch } from '../index.js'
-import { DSH_012_RANGE, LEGACY_CLIENT_RANGE } from './dsh-compat.cjs'
+import { DSH_MODERN_RANGE, LEGACY_CLIENT_RANGE } from './dsh-compat.cjs'
 
-const clientVersion = `${LEGACY_CLIENT_RANGE} || ${DSH_012_RANGE}`
+const clientVersion = `${LEGACY_CLIENT_RANGE} || ${DSH_MODERN_RANGE}`
 
 const packageResolution: HarmonySourcePatch = {
   id: 'client-package-resolution',

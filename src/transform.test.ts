@@ -79,17 +79,19 @@ test('reuses an exact Patch transition until its fingerprint changes', () => {
   expect(applications).toBe(2)
 })
 
-test('keeps legacy and DSH 0.1.2 session targets in separate version lanes', () => {
+test('keeps legacy and modern DSH session targets in separate version lanes', () => {
   expect(sessionProfileTarget('0.1.1-rc.2')).toEqual({
     package: '@deepseek-ai/dsh-client-runtime',
     version: '>=0.1.0-rc.8 <0.1.2-0',
     file: 'lib/client.js',
   })
-  expect(sessionProfileTarget('0.1.2-alpha.4')).toEqual({
-    package: '@deepseek-ai/dsh-api-session-controller',
-    version: '>=0.1.2-alpha.4 <0.1.3-0',
-    file: 'lib/client.js',
-  })
+  for (const version of ['0.1.2-alpha.4', '0.1.3-alpha.2', '0.1.5-rc.2', '0.1.6-alpha.2']) {
+    expect(sessionProfileTarget(version)).toEqual({
+      package: '@deepseek-ai/dsh-api-session-controller',
+      version: '>=0.1.2-alpha.4 <0.1.7-0',
+      file: 'lib/client.js',
+    })
+  }
 })
 
 test('adapts the DSH 0.1.2 loader-aware client package resolver', () => {
