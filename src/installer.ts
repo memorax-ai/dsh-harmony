@@ -195,7 +195,19 @@ export async function waitForRuntimeChoice(ctx: Context): Promise<void> {
     },
   }))
 
-  if (!webInvocation()) {
+  if (webInvocation()) {
+    ctx.inject(['webServer', 'connection'], webCtx => {
+      const connection = (webCtx as unknown as {
+        connection: { authenticatedUrl?: (url: string) => string }
+      }).connection
+      // New Hosts announce their authenticated URL only after plugin setup.
+      // Publish the installer entry while preserving the runtime-choice gate.
+      if (typeof connection.authenticatedUrl === 'function') {
+        const url = connection.authenticatedUrl(`http://127.0.0.1:${webCtx.webServer.port}/`)
+        process.stdout.write(`dsh web: ${url}\n`)
+      }
+    })
+  } else {
     if (!process.stdin.isTTY) throw new Error(text(
       'dsh-harmony launcher is not active; run npm install -g dsh-harmony or start dsh in a terminal',
       'dsh-harmony 启动器尚未启用；请运行 npm install -g dsh-harmony，或在终端中启动 dsh',
