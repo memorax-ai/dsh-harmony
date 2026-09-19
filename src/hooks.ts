@@ -65,6 +65,7 @@ export interface ModuleTransformHooks<Loader> {
   targetFilename(filename: string, generation: number): string | undefined
   packageDirectory(filename: string): string | undefined
   resolveProfileDependency(specifier: string, parentUrl: string | undefined, generation: number): string | undefined
+  missingPeerAnchor(specifier: string, parentUrl: string | undefined, generation: number): string | undefined
   recordDependency(parentUrl: string | undefined, childUrl: string, generation: number): void
   resolveTypeScriptDependency(specifier: string, parentUrl: string | undefined, generation: number): string | undefined
   activeTypeScriptLoader(filename: string, generation: number): Loader | undefined
@@ -143,8 +144,13 @@ export function installNodeModuleHooks<Loader>(runtime: ModuleTransformHooks<Loa
             context.parentURL,
             requestedGeneration,
           )
-          if (filename === undefined) throw error
-          result = { url: pathToFileURL(filename).href, shortCircuit: true }
+          if (filename === undefined) {
+            const anchor = runtime.missingPeerAnchor(cleanSpecifier, context.parentURL, requestedGeneration)
+            if (anchor === undefined) throw error
+            result = nextResolve(cleanSpecifier, { ...context, parentURL: anchor })
+          } else {
+            result = { url: pathToFileURL(filename).href, shortCircuit: true }
+          }
           nextGeneration ??= inherited
         }
       }

@@ -5,6 +5,7 @@ import { dirname, extname, isAbsolute, join, posix, relative, resolve } from 'no
 import { fileURLToPath, pathToFileURL, URL } from 'node:url'
 import { Worker } from 'node:worker_threads'
 import semver from 'semver'
+import { missingHostPeerAnchor } from './peer-resolution.js'
 import ts from 'typescript'
 import type {
   HarmonyCompositePatch,
@@ -2480,6 +2481,11 @@ export function installModuleHooks(): void {
     targetFilename: (filename, requestedGeneration) => targetFilename(filename, requestedGeneration, true),
     packageDirectory: filename => packageFor(filename)?.dir,
     resolveProfileDependency,
+    missingPeerAnchor: (specifier, parentUrl, requestedGeneration) => missingHostPeerAnchor(
+      specifier, parentUrl,
+      generationStates.get(requestedGeneration)?.profileDependencies ?? new Map(),
+      process.env.DSH_HARMONY_ACTIVE_DSH_ENTRY,
+    ),
     recordDependency: recordModuleDependency,
     resolveTypeScriptDependency,
     activeTypeScriptLoader,

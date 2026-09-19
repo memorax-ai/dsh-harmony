@@ -49,7 +49,7 @@
         "en": "Harmony"
       },
       "summary": {
-        "zh-CN": "一个用于在运行时修补、替换和装饰 DeepSeek Harness 插件的库。",
+        "zh-CN": "\u4e00\u4e2a\u7528\u4e8e\u5728\u8fd0\u884c\u65f6\u4fee\u8865\u3001\u66ff\u6362\u548c\u88c5\u9970 DeepSeek Harness \u63d2\u4ef6\u7684\u5e93\u3002",
         "en": "A library for patching, replacing and decorating DeepSeek Harness plugins during runtime"
       },
       "category": "plugin-development",
@@ -98,7 +98,7 @@
     "benchmark:fleet": "npm run build:core && npm run build:scripts && node scripts/benchmark-fleet.mjs",
     "benchmark:dsh-load": "npm run build:core && npm run build:scripts && node scripts/benchmark-dsh-load.mjs",
     "test": "npm run build && npm run build --workspaces --if-present && tsc -p tsconfig.test.json && npm run test:unit && npm run test:integration && npm run test:e2e",
-    "test:unit": "vitest run src/installer.test.ts src/compatibility.test.ts src/http.test.ts src/locale.test.ts src/orchestrator.test.ts src/order.test.ts src/scheduler.test.ts src/session-profile.test.ts src/settings.test.ts src/transform.test.ts packages/react/src/patches.test.ts packages/react/src/studio.test.ts",
+    "test:unit": "vitest run src/installer.test.ts src/compatibility.test.ts src/http.test.ts src/locale.test.ts src/orchestrator.test.ts src/order.test.ts src/scheduler.test.ts src/session-profile.test.ts src/settings.test.ts src/transform.test.ts packages/react/src/patches.test.ts packages/react/src/studio.test.ts src/peer-resolution.test.ts",
     "test:integration": "vitest run src/profile.test.ts src/runtime.test.ts src/tui.test.ts",
     "test:e2e": "node test/hook.e2e.ts && node test/module-hooks.e2e.ts && node test/load-plan.e2e.ts && node test/client.e2e.ts && node test/first-boot.e2e.ts && node test/embedded.e2e.ts && node test/shim.e2e.ts && node test/bootstrap.e2e.ts && node test/runtime-gate.e2e.ts",
     "test:package": "node test/package.e2e.ts",
