@@ -1753,6 +1753,45 @@ test('restarts a service consumer once when its Provider reloads in the same bat
   expect(consumerActivations).toBe(1)
 })
 
+test('reloads and restores entries from the current Cordis loader', async () => {
+  const previous = () => {}
+  const next = () => {}
+  const events: string[] = []
+  let entry: any
+  const makeFiber = (plugin: unknown) => ({
+    uid: 1,
+    runtime: { callback: plugin },
+    async dispose() { events.push(entry.options.disabled ? 'dispose-disabled' : 'dispose-enabled') },
+    async await() { events.push('ready') },
+  })
+  entry = {
+    options: { name: 'current-loader-target' },
+    fiber: makeFiber(previous),
+    loader: { unwrapExports(value: unknown) { return value } },
+    parent: { tree: { async import() { return next } } },
+    getOuterStack() { return [] },
+    _patchContext() { events.push('context') },
+    ctx: {
+      registry: {
+        plugin(plugin: unknown) {
+          events.push(plugin === next ? 'start-next' : 'start-previous')
+          return { ctx: { fiber: makeFiber(plugin) } }
+        },
+      },
+    },
+  } as any
+
+  const restore = await reloadEntries([entry], 1)
+  expect(entry.fiber.runtime.callback).toBe(next)
+  expect(entry.options.disabled).toBeUndefined()
+  expect(events).toEqual(['dispose-disabled', 'context', 'start-next', 'ready'])
+
+  await restore()
+  expect(entry.fiber.runtime.callback).toBe(previous)
+  expect(entry.options.disabled).toBeUndefined()
+  expect(events).toEqual(['dispose-disabled', 'context', 'start-next', 'ready', 'dispose-disabled', 'context', 'start-previous', 'ready'])
+})
+
 test('reloads a changed patch file while the profile is running', async () => {
   const profile = join(root, 'watched-profile')
   const provider = join(profile, 'node_modules', 'watched-provider')

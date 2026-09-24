@@ -59,17 +59,23 @@ interface ReloadFiber {
   uid: number | null
   inject?: unknown
   runtime: { callback: unknown } | null
+  dispose?(): Promise<void> | void
+  await?(): Promise<unknown>
 }
 
 interface ReloadableEntry {
   id?: string
-  options: { name: string; inject?: unknown }
+  options: { name: string; inject?: unknown; config?: unknown; disabled?: unknown }
   fiber?: ReloadFiber
   parent: { tree: { ctx?: { baseUrl?: string }; import(name: string, getOuterStack?: () => string[]): unknown } }
-  loader: { unwrapExports(value: unknown): unknown }
+  loader: { unwrapExports(value: unknown): unknown; showLog?(entry: ReloadableEntry, action: string): void }
+  ctx?: {
+    registry: { plugin(plugin: unknown, config: unknown, stack: () => string[]): { ctx: { fiber: ReloadFiber } } }
+  }
   getOuterStack(): string[]
-  _dispose(fiber?: ReloadFiber): Promise<void>
-  _start(plugin: unknown): Promise<void>
+  _patchContext?(diff: string[]): Promise<void> | void
+  _dispose?(fiber?: ReloadFiber): Promise<void>
+  _start?(plugin: unknown): Promise<void>
 }
 
 interface HarmonyLoadPerformance {
@@ -179,6 +185,37 @@ function sendAsset(request: IncomingMessage, response: ServerResponse, image: Bu
   response.end(request.method === 'HEAD' ? undefined : image)
 }
 
+async function disposeEntry(entry: ReloadableEntry, fiber: ReloadFiber): Promise<void> {
+  if (entry._dispose) return entry._dispose(fiber)
+  if (!fiber.dispose) throw new Error('dsh-harmony: loader entry cannot be disposed')
+  // The current Loader persists disabled=true when it observes an unplanned fiber disposal.
+  const disabled = entry.options.disabled
+  entry.options.disabled = true
+  if (entry.fiber === fiber) entry.fiber = undefined
+  try {
+    await fiber.dispose()
+  } finally {
+    if (disabled === undefined) delete entry.options.disabled
+    else entry.options.disabled = disabled
+  }
+}
+
+async function startEntry(entry: ReloadableEntry, plugin: unknown): Promise<void> {
+  if (entry._start) return entry._start(plugin)
+  if (!entry._patchContext || !entry.ctx) throw new Error('dsh-harmony: loader entry cannot be started')
+  await entry._patchContext([])
+  entry.loader.showLog?.(entry, 'apply')
+  const fiber = entry.ctx.registry.plugin(plugin, entry.options.config, entry.getOuterStack).ctx.fiber
+  entry.fiber = fiber
+  try {
+    if (!fiber.await) throw new Error('dsh-harmony: loader fiber cannot be awaited')
+    await fiber.await()
+  } catch (error) {
+    await disposeEntry(entry, fiber)
+    throw error
+  }
+}
+
 export async function reloadEntries(
   entries: ReloadableEntry[],
   generation: number,
@@ -234,7 +271,7 @@ export async function reloadEntries(
     const restoring = touched.filter(plan => plan.entry.fiber?.runtime?.callback !== plan.previousPlugin)
     for (const plan of [...restoring].reverse()) {
       try {
-        if (plan.entry.fiber !== undefined) await plan.entry._dispose()
+        if (plan.entry.fiber !== undefined) await disposeEntry(plan.entry, plan.entry.fiber)
       } catch (rollbackError) {
         rollbackErrors.push(rollbackError)
       }
@@ -242,7 +279,7 @@ export async function reloadEntries(
     for (const plan of restoring) {
       if (plan.entry.fiber !== undefined) continue
       try {
-        await plan.entry._start(plan.previousPlugin)
+        await startEntry(plan.entry, plan.previousPlugin)
       } catch (rollbackError) {
         rollbackErrors.push(rollbackError)
       }
@@ -254,10 +291,10 @@ export async function reloadEntries(
   try {
     for (const plan of [...plans].reverse()) {
       touched.add(plan)
-      await plan.entry._dispose(plan.previous)
+      await disposeEntry(plan.entry, plan.previous)
     }
     for (const plan of plans) {
-      await plan.entry._start(plan.next)
+      await startEntry(plan.entry, plan.next)
       recordEntryLoad({
         id: plan.entry.id ?? plan.entry.options.name,
         name: plan.entry.options.name,
@@ -321,7 +358,7 @@ export async function apply(ctx: Context): Promise<void> {
   const selfEntry = (ctx as Context & { fiber?: { entry?: object } }).fiber?.entry
   const selfPackage = selfEntry === undefined
     ? HARMONY_PLUGIN
-    : packageNameOf((selfEntry as ReloadableEntry).options.name) ?? HARMONY_PLUGIN
+    : packageNameOf((selfEntry as { options: { name: string } }).options.name) ?? HARMONY_PLUGIN
   let warnedCompatibility = new Set<string>()
   let patchFailures = new Map<string, string>()
   let patchWarnings = new Map<string, string>()

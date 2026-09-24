@@ -26,7 +26,11 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/upstream"
-          echo '{"private":true}' > "$RUNNER_TEMP/upstream/package.json"
+          if [ "${{ matrix.dsh }}" = "0.1.2-rc.1" ]; then
+            cp test/fixtures/upstream-0.1.2-rc.1/package.json "$RUNNER_TEMP/upstream/package.json"
+          else
+            echo '{"private":true}' > "$RUNNER_TEMP/upstream/package.json"
+          fi
           npm install --prefix "$RUNNER_TEMP/upstream" --ignore-scripts --no-audit --no-fund "@deepseek-ai/dsh@${{ matrix.dsh }}"
       - name: Verify startup and live client reload
         shell: bash
