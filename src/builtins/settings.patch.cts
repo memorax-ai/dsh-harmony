@@ -55,18 +55,43 @@ const patch: HarmonySourcePatch = {
 \t\t\t\t"aria-hidden": true
 \t\t\t});`)
 
-    const close = exactlyOne(
-      query('VariableDeclaration').filter((node) => {
+    const closeDeclarations = query('VariableDeclaration').filter((node) => {
         const declaration = node as ts.VariableDeclaration
         return typescript.isIdentifier(declaration.name) && declaration.name.text === 'close'
-      }),
-      'close declaration',
-    )
+      })
+    const guard = `
+        const harmonyGuard = globalThis.__dshHarmonyBeforeSettingsClose;
+        if (harmonyGuard && !await harmonyGuard()) return;`
+
+    if (closeDeclarations.length === 0) {
+      const settingsRoot = exactlyOne(
+        query('FunctionDeclaration').filter((node) =>
+          (node as ts.FunctionDeclaration).name?.text === 'SettingsRoot'),
+        'SettingsRoot declaration',
+      )
+      const property = (name: string, initializer: string) => exactlyOne(
+        query('PropertyAssignment', settingsRoot).filter((node) => {
+          const candidate = node as ts.PropertyAssignment
+          return candidate.name.getText(sourceFile) === name
+            && candidate.initializer.getText(sourceFile) === initializer
+        }),
+        `SettingsPanel ${name} property`,
+      ) as ts.PropertyAssignment
+      const onClose = property('onClose', 'close')
+      const onSelect = property('onSelect', 'actions.select')
+      edit.overwrite(onClose.initializer.getStart(sourceFile), onClose.initializer.getEnd(), `async () => {${guard}
+          close();
+        }`)
+      edit.overwrite(onSelect.initializer.getStart(sourceFile), onSelect.initializer.getEnd(), `async (id) => {${guard}
+          actions.select(id);
+        }`)
+      return
+    }
+
+    const close = exactlyOne(closeDeclarations, 'close declaration')
     const closeCallback = exactlyOne(query('ArrowFunction', close), 'close callback') as ts.ArrowFunction
     edit.prependLeft(closeCallback.getStart(sourceFile), 'async ')
-    edit.prependLeft(closeCallback.body.getStart(sourceFile) + 1, `
-        const harmonyGuard = globalThis.__dshHarmonyBeforeSettingsClose;
-        if (harmonyGuard && !await harmonyGuard()) return;`)
+    edit.prependLeft(closeCallback.body.getStart(sourceFile) + 1, guard)
 
     const onSelect = exactlyOne(
       query('PropertyAssignment').filter((node) => {
@@ -76,9 +101,7 @@ const patch: HarmonySourcePatch = {
       }),
       'SettingsPanel onSelect property',
     ) as ts.PropertyAssignment
-    edit.overwrite(onSelect.initializer.getStart(sourceFile), onSelect.initializer.getEnd(), `async (id) => {
-          const harmonyGuard = globalThis.__dshHarmonyBeforeSettingsClose;
-          if (harmonyGuard && !await harmonyGuard()) return;
+    edit.overwrite(onSelect.initializer.getStart(sourceFile), onSelect.initializer.getEnd(), `async (id) => {${guard}
           setActiveId(id);
         }`)
   },

@@ -27,6 +27,8 @@ try {
     child.once('error', error => { clearTimeout(timer); reject(error) })
     child.once('exit', code => { clearTimeout(timer); reject(new Error(`upstream exited ${code}:\n${output}`)) })
   })
+  const startupOutput = output.replace(/token=[^\s]+/g, 'token=REDACTED')
+  assert.doesNotMatch(startupOutput, /failed to import|entry did not activate/, startupOutput)
   const api = async (path: string) => {
     const address = new URL(url)
     address.pathname = path
