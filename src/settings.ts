@@ -1,5 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
-import * as dshSettings from '@deepseek-ai/dsh-settings'
+import type { SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
 
 const Config = z.object({})
@@ -12,5 +12,5 @@ export function apply(ctx: Context): void {
     ctx.effect(() => settings.configure!({ auto: false }))
     return
   }
-  ctx.settings.register(dshSettings.settingsNamespace('dsh-harmony'), Config, { applies: 'restart' })
+  ctx.settings.register('dsh-harmony' as SettingsNamespace, Config, { applies: 'restart' })
 }
