@@ -104,6 +104,7 @@ function trackedEdit(source: string): TrackedEdit {
           end = Math.max(end, source.length)
         } else if (insertionMethods.has(property)) {
           const index = Number(args[0])
+          if (!Number.isInteger(index) || index < 0 || index > source.length) complete = false
           start = Math.min(start, index)
           end = Math.max(end, index)
         } else if (rangeMethods.has(property)) {
@@ -404,6 +405,8 @@ function sourceFingerprint(filename: string, source: string): string {
   return createHash('sha256')
     .update(String(sourceScriptKind(filename)))
     .update('\0')
+    .update(filename)
+    .update('\0')
     .update(source)
     .digest('base64url')
 }
@@ -488,6 +491,12 @@ class AstIndex {
 
   query(plan: QueryPlan, root: ts.Node = this.sourceFile): ts.Node[] {
     if (plan.sourceFile) return root.kind === ts.SyntaxKind.SourceFile ? [root] : []
+    // Subtree hashes omit leading trivia and absolute positions. Such selectors
+    // need the complete AST context rather than reusable subtree results.
+    if (plan.dependencies.source || plan.observedProperties.some(property =>
+      property.split('.').some(key => key === 'pos' || key === 'end' || key === 'fileName'))) {
+      return tsquery(root, plan.selector)
+    }
     if (!plan.indexable || plan.dependencies.siblings || plan.dependencies.childPosition
       || plan.dependencies.siblingCount || plan.dependencies.source) {
       return this.queryAutomaton(plan, root)
@@ -750,36 +759,42 @@ function resolveRelativeLocators(
   locators: ReadonlyArray<RelativeMatchLocator>,
   sourceFile: ts.SourceFile,
 ): ts.Node[] {
-  if (locators.length === 0) return []
   const rootStart = root.getStart(sourceFile)
+  return resolveNodeLocators(root, locators,
+    node => node.getStart(sourceFile) - rootStart, node => node.getEnd() - rootStart)
+}
+
+function resolveNodeLocators(
+  root: ts.Node,
+  locators: ReadonlyArray<RelativeMatchLocator>,
+  startOf: (node: ts.Node) => number,
+  endOf: (node: ts.Node) => number,
+): ts.Node[] {
+  if (locators.length === 0) return []
   const results = new Array<ts.Node>(locators.length)
-  const occurrences = new Map<string, number>()
-  const visit = (node: ts.Node, indexes: number[]): void => {
-    const start = node.getStart(sourceFile) - rootStart
-    const end = node.getEnd() - rootStart
-    const matching = indexes.filter(index => {
-      const locator = locators[index]!
-      return node.kind === locator.kind && start === locator.start && end === locator.end
-    })
-    if (matching.length > 0) {
-      const key = `${node.kind}\0${start}\0${end}`
-      const occurrence = occurrences.get(key) ?? 0
-      occurrences.set(key, occurrence + 1)
-      for (const index of matching) {
-        if (locators[index]!.occurrence === occurrence) results[index] = node
-      }
-    }
-    for (const child of node.getChildren()) {
-      const childStart = child.getStart(sourceFile) - rootStart
-      const childEnd = child.getEnd() - rootStart
-      const contained = indexes.filter(index => {
-        const locator = locators[index]!
-        return locator.start >= childStart && locator.end <= childEnd
-      })
-      if (contained.length > 0) visit(child, contained)
-    }
+  const indexed = new Map<string, { indexes: Map<number, number>; occurrence: number }>()
+  let minimum = Infinity
+  let maximum = -Infinity
+  for (const [index, locator] of locators.entries()) {
+    const key = `${locator.kind}\0${locator.start}\0${locator.end}`
+    const entry = indexed.get(key) ?? { indexes: new Map<number, number>(), occurrence: 0 }
+    entry.indexes.set(locator.occurrence, index)
+    indexed.set(key, entry)
+    minimum = Math.min(minimum, locator.start)
+    maximum = Math.max(maximum, locator.end)
   }
-  visit(root, locators.map((_, index) => index))
+  const visit = (node: ts.Node): void => {
+    const start = startOf(node)
+    const end = endOf(node)
+    if (start > maximum || end < minimum) return
+    const entry = indexed.get(`${node.kind}\0${start}\0${end}`)
+    if (entry !== undefined) {
+      const index = entry.indexes.get(entry.occurrence++)
+      if (index !== undefined) results[index] = node
+    }
+    for (const child of node.getChildren()) visit(child)
+  }
+  visit(root)
   return results
 }
 
@@ -822,32 +837,9 @@ function createSourceAst(filename: string, source: string, persistent = true): S
 }
 
 function resolveLocators(sourceFile: ts.SourceFile, locators: ReadonlyArray<MatchLocator>): ts.Node[] {
-  if (locators.length === 0) return []
-  const results = new Array<ts.Node>(locators.length)
-  const occurrences = new Map<string, number>()
-  const visit = (node: ts.Node, indexes: number[]): void => {
-    const matching = indexes.filter(index => {
-      const locator = locators[index]!
-      return node.kind === locator.kind && node.pos === locator.pos && node.end === locator.end
-    })
-    if (matching.length > 0) {
-      const key = `${node.kind}\0${node.pos}\0${node.end}`
-      const occurrence = occurrences.get(key) ?? 0
-      occurrences.set(key, occurrence + 1)
-      for (const index of matching) {
-        if (locators[index]!.occurrence === occurrence) results[index] = node
-      }
-    }
-    for (const child of node.getChildren()) {
-      const contained = indexes.filter(index => {
-        const locator = locators[index]!
-        return locator.pos >= child.pos && locator.end <= child.end
-      })
-      if (contained.length > 0) visit(child, contained)
-    }
-  }
-  visit(sourceFile, locators.map((_, index) => index))
-  return results
+  return resolveNodeLocators(sourceFile,
+    locators.map(locator => ({ ...locator, start: locator.pos })),
+    node => node.pos, node => node.end)
 }
 
 function query(sourceAst: SourceAst, selectorText: string): ts.Node[] {

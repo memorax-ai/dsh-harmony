@@ -750,6 +750,37 @@ module.exports = {
   expect(getPatchInspections('selected-loader-target', 'index.ts')[0]?.original).toContain('"nested"')
 })
 
+test('does not patch an unselected copy of a target package', () => {
+  const profile = join(root, 'isolated-target-profile')
+  const provider = join(profile, 'node_modules', 'isolated-target-provider')
+  const target = join(profile, 'node_modules', 'isolated-target')
+  const other = join(root, 'isolated-target-other')
+  for (const directory of [provider, target, other]) mkdirSync(directory, { recursive: true })
+  writeFileSync(join(profile, 'package.json'), JSON.stringify({ dependencies: {
+    'isolated-target-provider': '1', 'isolated-target': '1',
+  } }))
+  writeFileSync(join(provider, 'package.json'), JSON.stringify({
+    name: 'isolated-target-provider', dsh: { harmony: { patches: ['./patch.cjs'] } },
+  }))
+  writeFileSync(join(provider, 'patch.cjs'), `
+module.exports = {
+  id: 'value', target: { package: 'isolated-target', file: 'index.js' },
+  select: 'NumericLiteral', expect: 1,
+  apply({ node, edit }) { edit.overwrite(node.getStart(), node.getEnd(), '2') },
+}
+`)
+  const source = 'export const value = 1\n'
+  for (const directory of [target, other]) {
+    writeFileSync(join(directory, 'package.json'), JSON.stringify({ name: 'isolated-target', version: '1.0.0' }))
+    writeFileSync(join(directory, 'index.js'), source)
+  }
+  synchronizeProfile(profile)
+  expect(readFileSync(join(other, 'index.js'), 'utf8')).toBe(source)
+  expect(readFileSync(join(target, 'index.js'), 'utf8')).toContain('value = 2')
+  inspectPatchTargets()
+  expect(readFileSync(join(other, 'index.js'), 'utf8')).toBe(source)
+})
+
 test('creates a new generation when only the selected target package changes', () => {
   const profile = join(root, 'selected-target-update-profile')
   const provider = join(root, 'selected-target-update-provider')
@@ -2969,6 +3000,7 @@ module.exports = {
 })
 
 test('applies the bundled Settings integration through the ordinary Patch pipeline', () => {
+  const profile = join(root, 'bundled-settings-profile')
   const target = join(root, 'bundled-settings-target')
   const filename = join(target, 'lib/client.js')
   mkdirSync(join(target, 'lib'), { recursive: true })
@@ -2993,7 +3025,11 @@ function SettingsRoot() {
 }
 `)
 
-  discoverPackage(process.cwd())
+  mkdirSync(profile)
+  writeFileSync(join(profile, 'package.json'), '{}')
+  synchronizeProfile(profile, [], undefined, [
+    join(process.cwd(), 'package.json'), join(target, 'package.json'),
+  ])
   const transformed = readFileSync(filename, 'utf8')
 
   expect(transformed).toContain('dshHarmonySettingsPanel')
@@ -3007,6 +3043,7 @@ function SettingsRoot() {
 })
 
 test('applies the bundled session profile guard at the history loading boundary', () => {
+  const profile = join(root, 'bundled-session-profile')
   const target = join(root, 'bundled-session-runtime-target')
   const filename = join(target, 'lib/client.js')
   mkdirSync(join(target, 'lib'), { recursive: true })
@@ -3028,7 +3065,12 @@ class Session {
 }
 `)
 
-  discoverPackage(process.cwd())
+  mkdirSync(profile)
+  writeFileSync(join(profile, 'package.json'), '{}')
+  synchronizeProfile(profile, [], undefined, [
+    join(process.cwd(), 'package.json'), join(target, 'package.json'),
+    join(process.cwd(), 'node_modules/@deepseek-ai/dsh-client-ui-settings-general/package.json'),
+  ])
   const transformed = readFileSync(filename, 'utf8')
 
   expect(transformed).toContain('__dshHarmonyBeforeSessionOpen?.(this.sessionId)')

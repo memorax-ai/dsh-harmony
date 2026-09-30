@@ -11,6 +11,7 @@ import {
   beginProfileUpdate,
   dependentPackages,
   getPatchStatuses,
+  inspectPatchTargets,
   installFileTransforms,
   installModuleHooks,
   resolveProfileDependency,
@@ -29,6 +30,7 @@ const importOnly = join(profile, 'bundle/node_modules/module-hook-import-only')
 const arbitrary = join(profile, 'arbitrary-package-directory')
 const arbitraryCommonJS = join(profile, 'arbitrary-commonjs-package-directory')
 const arbitraryFallback = join(profile, 'node_modules/module-hook-arbitrary')
+const unselectedTarget = join(external, 'node_modules/module-hook-target')
 const esmProbe = join(profile, 'transitive-probe.mjs')
 const cjsProbe = join(profile, 'transitive-probe.cjs')
 const importOnlyProbe = join(profile, 'import-only-probe.mjs')
@@ -57,6 +59,12 @@ try {
   mkdirSync(arbitrary)
   mkdirSync(arbitraryCommonJS)
   mkdirSync(arbitraryFallback)
+  mkdirSync(join(unselectedTarget, 'lib'), { recursive: true })
+  writeFileSync(join(unselectedTarget, 'package.json'), JSON.stringify({
+    name: 'module-hook-target', version: '1.0.0', type: 'module',
+  }))
+  writeFileSync(join(unselectedTarget, 'lib/array.js'), 'export const value = 1\n')
+  writeFileSync(join(unselectedTarget, 'index.ts'), 'export const value: number = 1\n')
   writeFileSync(join(profile, 'package.json'), JSON.stringify({ dependencies: {
     'module-hook-provider': '1',
     'module-hook-target': '1',
@@ -208,6 +216,12 @@ module.exports = [
   installModuleHooks()
   installFileTransforms()
 
+  assert.equal((await import(pathToFileURL(join(unselectedTarget, 'lib/array.js')).href)).value, 1)
+  await assert.rejects(
+    import(pathToFileURL(join(unselectedTarget, 'index.ts')).href),
+    (error: any) => error?.code === 'ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING',
+  )
+
   const versionedRuntime = await import(`${new URL('../lib/runtime.js', import.meta.url).href}?dsh-harmony=${generation}`)
   assert.equal(versionedRuntime.getPatchStatuses, getPatchStatuses)
   const versionedPackage = await import(`dsh-harmony?dsh-harmony=${generation}`)
@@ -275,6 +289,12 @@ module.exports = [
   candidate.rollback()
   await assert.rejects(
     import(`${pathToFileURL(join(unrelated, 'index.ts')).href}?unrelated=1`),
+    (error: any) => error?.code === 'ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING',
+  )
+  inspectPatchTargets()
+  assert.equal((await import(`${pathToFileURL(join(unselectedTarget, 'lib/array.js')).href}?inspected=1`)).value, 1)
+  await assert.rejects(
+    import(`${pathToFileURL(join(unselectedTarget, 'index.ts')).href}?inspected=1`),
     (error: any) => error?.code === 'ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING',
   )
 } finally {

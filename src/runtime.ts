@@ -245,6 +245,13 @@ function selectedProfilePackage(packageName: string, requestedGeneration = gener
   }
 }
 
+function isSelectedTargetPackage(pkg: PackageInfo, requestedGeneration: number): boolean {
+  if (activeProfileDir === undefined) return true
+  const directory = generationStates.get(requestedGeneration)?.profileDependencies.get(pkg.name)
+    ?? selectedProfilePackage(pkg.name, requestedGeneration)?.dir
+  return directory === undefined || directory === pkg.dir
+}
+
 export function recordStartupPerformance(value: HarmonyStartupPerformance): void {
   startupPerformance = value
 }
@@ -1638,7 +1645,8 @@ function targetFilename(
     if (!normalized.endsWith(suffix)) continue
     const target = canonicalFilename(absolute)
     const pkg = packageFor(target)
-    if (pkg !== undefined && targetPackages.has(pkg.name)) return target
+    if (pkg !== undefined && targetPackages.has(pkg.name)
+      && isSelectedTargetPackage(pkg, requestedGeneration)) return target
   }
   return undefined
 }
@@ -1661,7 +1669,7 @@ function activeTypeScriptLoader(
   filename = canonicalFilename(filename)
   const pkg = packageFor(filename)
   const state = generationStates.get(requestedGeneration)
-  if (pkg === undefined || state === undefined) return undefined
+  if (pkg === undefined || state === undefined || !isSelectedTargetPackage(pkg, requestedGeneration)) return undefined
   if (state.typescriptLoaderPackages !== undefined) {
     return state.typescriptLoaderPackages.has(pkg.name) ? pkg : undefined
   }
