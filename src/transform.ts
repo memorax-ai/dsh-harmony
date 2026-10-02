@@ -1133,6 +1133,54 @@ export function assertNoReplaceConflict<T extends PatchIdentity>(functionName: s
   }
 }
 
+function directiveEnd(statements: ts.NodeArray<ts.Statement>, start: number): number {
+  let end = start
+  for (const statement of statements) {
+    if (!ts.isExpressionStatement(statement) || !ts.isStringLiteral(statement.expression)) break
+    end = statement.getEnd()
+  }
+  return end
+}
+
+function semanticBody(source: string, sourceFile: ts.SourceFile, node: SemanticFunction): {
+  directives: string
+  body: string
+  hoisted: string
+} {
+  const start = node.body!.getStart(sourceFile) + 1
+  const end = node.body!.getEnd() - 1
+  const directivesEnd = directiveEnd(node.body!.statements, start)
+  const parameters = new Set(node.parameters.map(parameter => parameter.name.getText(sourceFile)))
+  const edit = new MagicString(source)
+  const hoisted = new Set<string>()
+  const bindingNames = (name: ts.BindingName): string[] => ts.isIdentifier(name)
+    ? [name.text]
+    : name.elements.flatMap(element => ts.isOmittedExpression(element) ? [] : bindingNames(element.name))
+  const visit = (current: ts.Node): void => {
+    if (ts.isFunctionLike(current) || ts.isClassLike(current)) return
+    if (ts.isVariableDeclarationList(current) && !(current.flags & ts.NodeFlags.BlockScoped)
+      && current.declarations.some(declaration => bindingNames(declaration.name).some(name => parameters.has(name)))) {
+      // A parameter and a var of the same name share a binding. Moving that var
+      // into the callback would shadow the parameter, so keep only assignments.
+      if (current.declarations.some(declaration => !ts.isIdentifier(declaration.name))) {
+        throw new Error('dsh-harmony: semantic patches do not support destructured var redeclarations of parameters')
+      }
+      for (const declaration of current.declarations) {
+        const name = declaration.name.getText(sourceFile)
+        if (!parameters.has(name)) hoisted.add(name)
+      }
+      edit.remove(current.getStart(sourceFile), current.declarations[0]!.getStart(sourceFile))
+    }
+    ts.forEachChild(current, visit)
+  }
+  ts.forEachChild(node.body!, visit)
+  return {
+    directives: source.slice(start, directivesEnd),
+    body: edit.slice(directivesEnd, end),
+    hoisted: hoisted.size === 0 ? '' : `var ${[...hoisted].join(',')};`,
+  }
+}
+
 export function instrumentSemantic(
   filename: string,
   source: string,
@@ -1146,6 +1194,13 @@ export function instrumentSemantic(
   const nodes = semanticFunctions(sourceFile, functionName)
   expectedMatches(registered, patch, nodes.length, target)
   const edit = new MagicString(source)
+  const dispatcherName = uniqueIdentifier(sourceFile, '__dshHarmonyDispatcher')
+  if (nodes.length > 0) {
+    const insertion = directiveEnd(sourceFile.statements, sourceFile.statements[0]!.getStart(sourceFile))
+    // Hoisted functions can be called through an ESM cycle before this module's
+    // initialization. A var plus lazy binding at the call site preserves that.
+    edit.appendLeft(insertion, `;var ${dispatcherName}=globalThis.__dshHarmonyBind(${JSON.stringify(bindingKey)});\n`)
+  }
   for (const node of nodes) {
     if (node.asteriskToken !== undefined) throw new Error(`dsh-harmony: semantic patches do not support generator ${functionName}`)
     if (node.body === undefined) throw new Error(`dsh-harmony: semantic target ${functionName} has no body`)
@@ -1163,10 +1218,10 @@ export function instrumentSemantic(
     }).join('')
     const synchronizeArguments = `const ${lengthName}=arguments.length;for(let ${indexName}=${argsName}.length;${indexName}<${lengthName};${indexName}++)delete arguments[${indexName}];for(let ${indexName}=0;${indexName}<${argsName}.length;${indexName}++)arguments[${indexName}]=${argsName}[${indexName}];arguments.length=${argsName}.length;`
     const synchronizeParameters = `const ${changedName}=${argsName}.length!==arguments.length||${argsName}.some((${argsName},${indexName})=>${argsName}!==arguments[${indexName}]);if(${changedName}){${synchronizeArguments}${assignments}}`
-    const body = source.slice(node.body.getStart(sourceFile) + 1, node.body.getEnd() - 1)
+    const { directives, body, hoisted } = semanticBody(source, sourceFile, node)
     const callback = node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.AsyncKeyword) ? 'async ' : ''
     edit.overwrite(node.body.getStart(sourceFile) + 1, node.body.getEnd() - 1,
-      `return globalThis.__dshHarmonyInvoke(${JSON.stringify(bindingKey)}, this, Array.from(arguments), ${callback}(${argsName}) => {${synchronizeParameters}${body}});`)
+      `${directives}\nreturn globalThis.__dshHarmonyInvoke(${dispatcherName}??=globalThis.__dshHarmonyBind(${JSON.stringify(bindingKey)}), this, Array.from(arguments), ${callback}(${argsName}) => {${directives}\n${hoisted}${synchronizeParameters}${body}});`)
   }
   return { source: edit.toString(), matches: nodes.length, bindingKey }
 }

@@ -98,6 +98,7 @@ interface TransformRecord {
   output: string
   inspection: CompactPatchInspection
   module?: HarmonyModuleLoadPlan
+  semanticBindingKeys?: string[]
 }
 
 export interface ParallelInspectionTask {
@@ -142,6 +143,7 @@ interface TargetFileRecord {
 interface GenerationState {
   providers: ProviderRecord[]
   profileDependencies: Map<string, string>
+  activePlugins: HarmonyActivePlugin[]
   order: string[]
   patchOrder: string[]
   disabled: Set<string>
@@ -196,7 +198,7 @@ let semanticBindings = new Map<string, SemanticDispatcher>()
 let generation = 0
 let generationSequence = 0
 const generationStates = new Map<number, GenerationState>([[0, {
-  providers: [], profileDependencies: new Map(), order: [], patchOrder: [], disabled: new Set(), patchesByPackage: new Map(),
+  providers: [], profileDependencies: new Map(), activePlugins: [], order: [], patchOrder: [], disabled: new Set(), patchesByPackage: new Map(),
   hasCompositePatches: false, targetFileSuffixes: new Map(), entries: new Map(),
   moduleDependents: new Map(),
 }]])
@@ -381,15 +383,6 @@ function changedPipelineTargets(
   return targets
 }
 
-function unchangedProviderGraph(previous: ProviderRecord, next: ProviderRecord): boolean {
-  return previous.patches.length === next.patches.length
-    && previous.patches.every((patch, index) => {
-      const candidate = next.patches[index]
-      return candidate !== undefined && patch.key === candidate.key
-        && patch.pipelineFingerprint === candidate.pipelineFingerprint
-    })
-}
-
 function addChangedProviderDependencyTargets(
   targets: PatchTargets,
   previous: Map<string, ProviderRecord>,
@@ -397,8 +390,7 @@ function addChangedProviderDependencyTargets(
 ): void {
   for (const [name, candidate] of next) {
     const current = previous.get(name)
-    if (current === undefined || current.signature === candidate.signature
-      || !unchangedProviderGraph(current, candidate)) continue
+    if (current === undefined || current.signature === candidate.signature) continue
     addPatchTargets(targets, current.patches)
     addPatchTargets(targets, candidate.patches)
   }
@@ -596,7 +588,7 @@ function retainTransformRecords(
     }))
 }
 
-function snapshotGeneration(retainedGeneration?: number, inheritTargetIndex = false): void {
+function snapshotGeneration(retainedGeneration?: number, inheritTargetIndex = false, plugins = activePlugins): void {
   const retainedState = retainedGeneration === undefined ? undefined : generationStates.get(retainedGeneration)
   generationStates.clear()
   if (retainedState !== undefined) generationStates.set(retainedGeneration!, retainedState)
@@ -625,6 +617,7 @@ function snapshotGeneration(retainedGeneration?: number, inheritTargetIndex = fa
   generationStates.set(generation, {
     providers: generationProviders,
     profileDependencies: new Map(profileDependencies),
+    activePlugins: plugins.map(plugin => ({ ...plugin, entryIds: [...plugin.entryIds] })),
     order: [...providerOrder],
     patchOrder: [...patchOrder],
     disabled: new Set(disabledPatchKeys),
@@ -657,7 +650,10 @@ function retainGeneration(activeGeneration: number): void {
 
 function pruneSemanticBindings(activeGeneration: number): void {
   const prefix = `${activeGeneration}\0`
-  semanticBindings = new Map([...semanticBindings].filter(([key]) => key.startsWith(prefix)))
+  // Retained outputs can still refer to an earlier generation's binding. Loaded
+  // modules own their dispatchers independently of this preparation cache.
+  const retained = new Set([...transformCache.values()].flatMap(record => record.semanticBindingKeys ?? []))
+  semanticBindings = new Map([...semanticBindings].filter(([key]) => key.startsWith(prefix) || retained.has(key)))
 }
 
 function updateStatus(registered: RegisteredPatch, value: Partial<HarmonyPatchStatus>): void {
@@ -800,7 +796,7 @@ function prepareProvider(
           key: `${info.name}/${patch.id}`,
           index: index++,
           declaration: relative(info.dir, filename).replaceAll('\\', '/'),
-          fingerprint: pipelineFingerprint,
+          fingerprint: `${signature}\0${pipelineFingerprint}`,
           pipelineFingerprint,
         })
       }
@@ -811,16 +807,6 @@ function prepareProvider(
     throw error
   } finally {
     for (const filename of declaredFiles) loadingPatchFiles.delete(filename)
-  }
-  const dependencyChanged = current !== undefined && current.signature !== signature
-    && current.patches.length === registered.length
-    && current.patches.every((patch, patchIndex) => {
-      const candidate = registered[patchIndex]
-      return candidate !== undefined && patch.key === candidate.key
-        && patch.pipelineFingerprint === candidate.pipelineFingerprint
-    })
-  if (dependencyChanged) {
-    for (const patch of registered) patch.fingerprint = `${signature}\0${patch.pipelineFingerprint}`
   }
   return { info, patches: registered, files, signature }
 }
@@ -901,6 +887,7 @@ export function synchronizeProfile(
       || previousPatchOrder.some((key, index) => key !== patchOrder[index])
     if (registryChanged || orderChanged || patchOrderChanged || disabledChanged) notify(changedTargets)
     generationStates.get(generation)!.profileDependencies = new Map(profileDependencies)
+    generationStates.get(generation)!.activePlugins = activePlugins.map(plugin => ({ ...plugin, entryIds: [...plugin.entryIds] }))
     if (previousWorkerThreads !== workerThreads) transformCache.clear()
     profileSnapshot = { ...profile, patchOrder: [...patchOrder] }
     return profileSnapshot
@@ -1019,6 +1006,7 @@ export function beginStartupUpdate(enabledPlugins: HarmonyActivePlugin[]): Profi
       profileSnapshot = next.profile
       profileDependencies = profileDependencyDirectories(next.profile)
       generationStates.get(generation)!.profileDependencies = new Map(profileDependencies)
+      generationStates.get(generation)!.activePlugins = activePlugins.map(plugin => ({ ...plugin, entryIds: [...plugin.entryIds] }))
       stagedProviderCaches.clear()
       refreshWatchedFiles?.()
       active = false
@@ -1096,6 +1084,7 @@ export function beginPluginUpdate(
         profileSnapshot = nextProfile
         profileDependencies = nextProfileDependencies
         generationStates.get(generation)!.profileDependencies = new Map(profileDependencies)
+        generationStates.get(generation)!.activePlugins = activePlugins.map(plugin => ({ ...plugin, entryIds: [...plugin.entryIds] }))
         stagedProviderCaches.clear()
         refreshWatchedFiles?.()
         active = false
@@ -1149,7 +1138,7 @@ export function beginPluginUpdate(
   if (targets.size === 0) retainPatchStatuses(previous.statuses)
   else resetPatchStatuses()
   profileDependencies = nextProfileDependencies
-  snapshotGeneration(previous.generation, targets.size === 0)
+  snapshotGeneration(previous.generation, targets.size === 0, enabledPlugins)
   let active = true
   return {
     generation: candidateGeneration,
@@ -1521,6 +1510,7 @@ function finishWorkingTransform(
     packageVersion: state.pkg.version,
     source: state.source,
     output: runtimeOutput,
+    semanticBindingKeys: [...state.semantic.values()].map(value => value.bindingKey),
     inspection: {
       package: state.pkg.name,
       file: state.relativeFile,
@@ -1876,11 +1866,16 @@ function compileSemanticDispatcher(patches: BoundSemanticPatch<RegisteredPatch>[
   }
 }
 
-function invokeSemantic(bindingKey: string, self: unknown, initialArgs: unknown[], original: SemanticOriginal): unknown {
-  return (semanticBindings.get(bindingKey) ?? invokeOriginal)(self, initialArgs, original)
+function bindSemantic(bindingKey: string): SemanticDispatcher {
+  return semanticBindings.get(bindingKey) ?? invokeOriginal
+}
+
+function invokeSemantic(dispatcher: SemanticDispatcher, self: unknown, initialArgs: unknown[], original: SemanticOriginal): unknown {
+  return dispatcher(self, initialArgs, original)
 }
 
 ;(globalThis as typeof globalThis & { __dshHarmonyInvoke?: typeof invokeSemantic }).__dshHarmonyInvoke = invokeSemantic
+;(globalThis as typeof globalThis & { __dshHarmonyBind?: typeof bindSemantic }).__dshHarmonyBind = bindSemantic
 
 export function getPatchStatuses(): HarmonyPatchStatus[] {
   return orderedPatches([...providers.values()].flatMap(provider => provider.patches))
@@ -2114,9 +2109,11 @@ export async function inspectPatchTargetsAsync(): Promise<HarmonyPatchInspection
   const serial = components.filter(component => !parallel.includes(component))
   const tasks = parallel.map((component): ParallelInspectionTask => ({
     profileDir: activeProfileDir!,
-    ...(requestedProfilePackages === undefined ? {} : { requestedProfilePackages: [...requestedProfilePackages] }),
-    additionalProfilePackages: [...additionalProfilePackages],
-    activePlugins: activePlugins.map(plugin => ({ ...plugin, entryIds: [...plugin.entryIds] })),
+    // Workers must discover exactly the candidate selection, including nested
+    // providers that have not yet been committed to the live profile inventory.
+    requestedProfilePackages: [...state!.profileDependencies.values()].map(directory => join(directory, 'package.json')),
+    additionalProfilePackages: [],
+    activePlugins: state!.activePlugins.map(plugin => ({ ...plugin, entryIds: [...plugin.entryIds] })),
     order: [...patchOrder],
     disabled: [...disabledPatchKeys],
     keys: component.map(item => item.key),

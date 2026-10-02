@@ -1198,8 +1198,152 @@ module.exports = [{
   const changedProvider = beginPluginUpdate(true)
   expect([...changedProvider.targets].map(([name, files]) => [name, [...files]])).toEqual([
     ['incremental-target-first', ['lib/index.js']],
+    // Provider edits can also change closures used by otherwise identical Patches.
+    ['incremental-target-second', ['lib/index.js']],
   ])
   changedProvider.rollback()
+})
+
+function regressionProfile(name: string, patches: string, sources: Record<string, string>) {
+  const profile = join(root, name)
+  const provider = join(profile, 'node_modules', `${name}-provider`)
+  const target = join(profile, 'node_modules', `${name}-target`)
+  mkdirSync(provider, { recursive: true })
+  mkdirSync(target, { recursive: true })
+  writeFileSync(join(profile, 'package.json'), JSON.stringify({ dependencies: {
+    [`${name}-provider`]: '1', [`${name}-target`]: '1',
+  } }))
+  writeFileSync(join(provider, 'package.json'), JSON.stringify({
+    name: `${name}-provider`, version: '1.0.0', dsh: { harmony: { patches: ['./patch.cjs'] } },
+  }))
+  writeFileSync(join(provider, 'patch.cjs'), patches)
+  writeFileSync(join(target, 'package.json'), JSON.stringify({ name: `${name}-target`, version: '1.0.0' }))
+  for (const [file, source] of Object.entries(sources)) writeFileSync(join(target, file), source)
+  return { profile, provider, target }
+}
+
+function evaluateCommonJS(source: string): any {
+  const module = { exports: {} }
+  new Function('module', 'exports', source)(module, module.exports)
+  return module.exports
+}
+
+test('keeps loaded semantic dispatchers and retained outputs alive across commits', async () => {
+  const fixture = regressionProfile('semantic-lifetime', `module.exports = {
+    id: 'after', target: { package: 'semantic-lifetime-target', file: 'index.js', function: 'answer' },
+    operation: 'after', handler({ result }) { return result + 1 },
+  }`, { 'index.js': 'function answer() { return 1 }; module.exports = answer' })
+  synchronizeProfile(fixture.profile)
+  const filename = join(fixture.target, 'index.js')
+  const loaded = evaluateCommonJS(readFileSync(filename, 'utf8'))
+  expect(loaded()).toBe(2)
+  const settings = beginProfileUpdate({ workerThreads: 2 })
+  expect(settings.targets.size).toBe(0)
+  await settings.commit()
+  expect(loaded()).toBe(2)
+  expect(evaluateCommonJS(readFileSync(filename, 'utf8'))()).toBe(2)
+
+  const changed = beginProfileUpdate({ disabled: ['semantic-lifetime-provider/after'] })
+  inspectPatchTargets()
+  await changed.commit()
+  expect(evaluateCommonJS(readFileSync(filename, 'utf8'))()).toBe(1)
+  // The old function may still be serving an in-flight request.
+  expect(loaded()).toBe(2)
+})
+
+test('invalidates closure dependencies even when another Patch changes structure', () => {
+  const providerSource = (value: number, description: string) => `
+    const value = ${value}; module.exports = [{
+      id: 'a', target: { package: 'mixed-dependency-target', file: 'a.js' },
+      select: 'NumericLiteral', expect: 1,
+      apply({node,edit}) { edit.overwrite(node.getStart(),node.getEnd(),String(value)) },
+    }, {
+      id: 'b', description: '${description}', target: { package: 'mixed-dependency-target', file: 'b.js' },
+      select: 'NumericLiteral', expect: 1,
+      apply({node,edit}) { edit.overwrite(node.getStart(),node.getEnd(),'9') },
+    }]`
+  const fixture = regressionProfile('mixed-dependency', providerSource(2, 'old'), {
+    'a.js': 'module.exports = 1', 'b.js': 'module.exports = 1',
+  })
+  synchronizeProfile(fixture.profile)
+  inspectPatchTargets()
+  expect(evaluateCommonJS(readFileSync(join(fixture.target, 'a.js'), 'utf8'))).toBe(2)
+  writeFileSync(join(fixture.provider, 'patch.cjs'), providerSource(3, 'new'))
+  const transaction = beginPluginUpdate()
+  try {
+    expect([...transaction.targets.get('mixed-dependency-target')!].sort()).toEqual(['a.js', 'b.js'])
+    inspectPatchTargets()
+    expect(evaluateCommonJS(readFileSync(join(fixture.target, 'a.js'), 'utf8'))).toBe(3)
+  } finally {
+    transaction.rollback()
+  }
+  expect(evaluateCommonJS(readFileSync(join(fixture.target, 'a.js'), 'utf8'))).toBe(2)
+})
+
+test('parallel inspection uses the candidate nested Provider selection and rolls back it', async () => {
+  const fixture = regressionProfile('candidate-worker', `module.exports = ['a', 'b'].map(id => ({
+    id, target: { package: 'candidate-worker-target', file: id + '.js' },
+    select: 'NumericLiteral', expect: 1,
+    apply({node,edit}) { edit.overwrite(node.getStart(),node.getEnd(),'2') },
+  }))`, { 'a.js': 'module.exports = 1', 'b.js': 'module.exports = 1' })
+  writeFileSync(join(fixture.profile, 'harmony.json'), JSON.stringify({
+    order: [], patchOrder: [], disabled: [], workerThreads: 2,
+  }))
+  synchronizeProfile(fixture.profile, ['candidate-worker-target'])
+  const transaction = beginPluginUpdate(false, [
+    { name: 'candidate-worker-target', entryIds: [] },
+    { name: 'candidate-worker-provider', entryIds: ['new-entry'] },
+  ], [join(fixture.provider, 'package.json')])
+  try {
+    expect(await inspectPatchTargetsAsync()).toHaveLength(2)
+    expect(getPatchStatuses().map(patch => patch.state)).toEqual(['bound', 'bound'])
+    expect(evaluateCommonJS(readFileSync(join(fixture.target, 'a.js'), 'utf8'))).toBe(2)
+  } finally {
+    transaction.rollback()
+  }
+  expect(getPatchStatuses()).toEqual([])
+  expect(await inspectPatchTargetsAsync()).toEqual([])
+  expect(evaluateCommonJS(readFileSync(join(fixture.target, 'a.js'), 'utf8'))).toBe(1)
+})
+
+test.each([
+  'function answer(x) { var x; return x }; module.exports = answer(7)',
+  'function answer(x) { var x = 8, y = 2; return [x, y, arguments[0]] }; module.exports = answer(7)',
+  'function answer(x) { for (var x of [1, 2]) {} return x }; module.exports = answer(7)',
+  'function answer() { "use strict"; return this === undefined }; module.exports = answer()',
+  '"use strict"; function answer() { return this === undefined }; module.exports = answer()',
+])('preserves semantic function scope: %s', source => {
+  const name = `semantic-scope-${Math.random().toString(36).slice(2)}`
+  const fixture = regressionProfile(name, `module.exports = {
+    id: 'noop', target: { package: '${name}-target', file: 'index.js', function: 'answer' },
+    operation: 'after', handler() {},
+  }`, { 'index.js': source })
+  synchronizeProfile(fixture.profile)
+  const transformed = readFileSync(join(fixture.target, 'index.js'), 'utf8')
+  expect(getPatchStatuses()[0]?.state).toBe('bound')
+  expect(evaluateCommonJS(transformed)).toEqual(evaluateCommonJS(source))
+})
+
+test('preserves parameter and arguments aliasing when a semantic before Patch changes arguments', () => {
+  const fixture = regressionProfile('semantic-var-before', `module.exports = {
+    id: 'before', target: { package: 'semantic-var-before-target', file: 'index.js', function: 'answer' },
+    operation: 'before', handler() { return [4] },
+  }`, { 'index.js': 'function answer(x) { var x; x += 1; return [x, arguments[0]] }; module.exports = answer(1)' })
+  synchronizeProfile(fixture.profile)
+  expect(evaluateCommonJS(readFileSync(join(fixture.target, 'index.js'), 'utf8'))).toEqual([5, 5])
+})
+
+test('fails unsupported destructured parameter redeclarations without changing the target', () => {
+  const source = 'function answer(x) { var { x } = { x: 2 }; return x }; module.exports = answer(1)'
+  const fixture = regressionProfile('semantic-destructured-var', `module.exports = {
+    id: 'after', target: { package: 'semantic-destructured-var-target', file: 'index.js', function: 'answer' },
+    operation: 'after', handler({ result }) { return result + 1 },
+  }`, { 'index.js': source })
+  synchronizeProfile(fixture.profile)
+  expect(readFileSync(join(fixture.target, 'index.js'), 'utf8')).toBe(source)
+  expect(getPatchStatuses()[0]).toMatchObject({
+    state: 'failed', error: expect.stringContaining('destructured var redeclarations'),
+  })
 })
 
 test('retains inspections across a target-free generation', () => {

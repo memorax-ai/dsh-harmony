@@ -77,4 +77,35 @@ const entry: {
 }
 await reloadEntries([entry], 1)
 assert.equal(entry.fiber?.runtime.callback.answer(), 2)
+
+// A circular ESM importer may invoke an exported function before the target's
+// top-level dispatcher binding has initialized.
+const semanticTarget = join(modules, 'semantic-cycle-target')
+const semanticProvider = join(modules, 'semantic-cycle-provider')
+mkdirSync(semanticTarget)
+mkdirSync(semanticProvider)
+writeFileSync(join(semanticTarget, 'package.json'), JSON.stringify({ name: 'semantic-cycle-target', type: 'module' }))
+writeFileSync(join(semanticTarget, 'index.js'), `
+import { result } from './consumer.js'
+export function answer(value) { return value }
+export { result }
+`)
+writeFileSync(join(semanticTarget, 'consumer.js'), `
+import { answer } from './index.js'
+export const result = answer(3)
+`)
+writeFileSync(join(semanticProvider, 'package.json'), JSON.stringify({
+  name: 'semantic-cycle-provider', dsh: { harmony: { patches: ['./patch.cjs'] } },
+}))
+writeFileSync(join(semanticProvider, 'patch.cjs'), `module.exports = {
+  id: 'after', target: { package: 'semantic-cycle-target', file: 'index.js', function: 'answer' },
+  operation: 'after', handler({ result }) { return result + 1 },
+}`)
+synchronizeProfile(profile, ['semantic-cycle-provider', 'semantic-cycle-target'])
+const cycleGeneration = getPatchStatuses()[0]!.generation
+const cycle = await import(`${pathToFileURL(join(semanticTarget, 'index.js')).href}?dsh-harmony=${cycleGeneration}`)
+assert.equal(cycle.result, 4)
+const settingsOnly = beginProfileUpdate({ workerThreads: 2 })
+await settingsOnly.commit()
+assert.equal(cycle.answer(3), 4)
 rmSync(profile, { recursive: true })
