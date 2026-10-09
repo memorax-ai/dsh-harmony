@@ -7,7 +7,7 @@ import type { HarmonyPatchTarget } from '../index.js'
 
 export const LEGACY_CLIENT_RANGE = '>=0.1.1-rc.2 <0.1.2-0'
 export const LEGACY_SHARED_RANGE = '>=0.1.0-rc.8 <0.1.2-0'
-export const DSH_MODERN_RANGE = '>=0.1.2-alpha.4 <0.1.8-0 || >=0.2.0-rc.1 <0.2.1-0'
+export const DSH_MODERN_RANGE = '>=0.1.2-alpha.4 <0.1.8-0 || >=0.2.0-rc.1 <0.2.1-0 || 0.2.1-alpha.2'
 
 export function activeDshVersion(): string {
   const entry = process.env.DSH_HARMONY_ACTIVE_DSH_ENTRY ?? process.env.DSH_HARMONY_DSH_ENTRY
