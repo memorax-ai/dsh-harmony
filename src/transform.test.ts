@@ -164,7 +164,7 @@ test('keeps legacy and modern DSH session targets in separate version lanes', ()
   for (const version of ['0.1.2-alpha.4', '0.1.3-alpha.2', '0.1.5-rc.2', '0.1.6-alpha.2', '0.1.7-rc.2', '0.2.0-rc.1']) {
     expect(sessionProfileTarget(version)).toEqual({
       package: '@deepseek-ai/dsh-api-session-controller',
-      version: '>=0.1.2-alpha.4 <0.1.8-0 || >=0.2.0-rc.1 <0.2.1-0',
+      version: '>=0.1.2-alpha.4 <0.1.8-0 || >=0.2.0-rc.1 <0.2.1-0 || 0.2.1-alpha.2',
       file: 'lib/client.js',
     })
   }

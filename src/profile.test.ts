@@ -178,7 +178,7 @@ test('declares the built-in Settings Patch when its target plugin is present', (
       './lib/builtins/session-profile.patch.cjs',
     ])
   expect(synchronized.plugins[0].compatibility.integrates).toEqual({
-    '@deepseek-ai/dsh-client-ui-renderer': '^0.1.1-rc.2',
+    '@deepseek-ai/dsh-client-ui-renderer': '^0.1.1-rc.2 || 0.2.0-rc.2 || 0.2.1-alpha.2',
   })
 
   rmSync(settingsDir, { recursive: true })
