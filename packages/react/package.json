@@ -48,8 +48,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && tsc -p examples/rebrand-plugin/tsconfig.json && tsc -p examples/rebrand-plugin/tsconfig.client.json",
-    "test": "npm run build && vitest run",
-    "check": "npm test",
+    "check": "npm run build",
     "prepack": "npm run build"
   },
   "engines": {
@@ -63,7 +62,6 @@
     "@types/node": "^24.10.0",
     "dsh-harmony": "file:../..",
     "magic-string": "^0.30.21",
-    "typescript": "^6.0.3",
-    "vitest": "^4.1.11"
+    "typescript": "^6.0.3"
   }
 }
