@@ -22,7 +22,9 @@ const appBoot: AppBoot = await import(
   pathToFileURL(dshRequire.resolve('@deepseek-ai/dsh-app-boot')).href
 )
 
-export const { initProfile, PROFILE_TEMPLATES, resolveProfileDir } = appBoot
+export const { initProfile, resolveProfileDir } = appBoot
+export const PROFILE_TEMPLATES: AppBoot['PROFILE_TEMPLATES'] = appBoot.PROFILE_TEMPLATES
+  ?? (await import(pathToFileURL(dshRequire.resolve('@deepseek-ai/dsh-official-bundles')).href)).PROFILE_TEMPLATES
 
 interface CurrentProfileTemplate {
   bundles: string[]
